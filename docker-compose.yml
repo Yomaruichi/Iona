@@ -1,0 +1,30 @@
+```yaml
+services:
+  iona:
+    image: ghcr.io/Yomaruichi/iona:latest
+    container_name: discordbot-iona
+    restart: unless-stopped
+
+    ports:
+      - "25530:25530"
+
+    environment:
+      NODE_ENV: production
+      WEBHOOK_PORT: 25530
+
+    env_file:
+      - .env
+
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+```

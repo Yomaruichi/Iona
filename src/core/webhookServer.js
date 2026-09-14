@@ -10,7 +10,7 @@ function registerRoute(path, middleware, handler) {
     console.log(`Webhook route registered: POST ${path}`);
 }
 
-function start(port = process.env.WEBHOOK_PORT || 3000) {
+function start(port = process.env.WEBHOOK_PORT || 25530) {
     app.listen(port, () => console.log(`Webhook server listening on :${port}`));
 }
 
