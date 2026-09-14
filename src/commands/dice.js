@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { dice } = require('../gambling.js');
+const { dice } = require('./gambling.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
