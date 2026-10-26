@@ -68,6 +68,14 @@ After configuring `.env`, recreate the container with the deployment command bel
 
 ## Docker deployment
 
+To send one clearly labeled simulated YouTube upload to the configured Discord channel:
+
+```sh
+docker compose exec iona node src/tools/simulateYoutube.js
+```
+
+Rebuild the container first if it does not yet contain this script. The simulation uses the real Discord connection and notification sender with fake feed/API responses and in-memory state. It uses no YouTube quota and makes no MongoDB changes. It verifies notification delivery and upload handling, but does not verify the API key, real feed access, or the scheduler.
+
 The existing Compose service builds the production image, loads `.env`, exposes port 3000, restarts unless stopped, and rotates Docker logs. MongoDB is configured through `MONGO_DB`; Compose does not provision a database. When running in Docker, `localhost` refers to the bot container, so use a MongoDB address reachable from that container.
 
 ```sh
