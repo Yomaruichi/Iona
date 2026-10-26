@@ -7,7 +7,7 @@ function init(discordClient) {
 async function notify(channelId, { title, body, url }) {
     if (!client) throw new Error('notify.init(client) not called yet');
     const channel = await client.channels.fetch(channelId).catch(() => null);
-    if (!channel) return console.warn(`notify: channel ${channelId} not found`);
+    if (!channel) throw new Error(`notify: channel ${channelId} not found`);
 
     await channel.send({
         embeds: [{

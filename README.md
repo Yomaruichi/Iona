@@ -6,9 +6,10 @@ Iona is a modular Discord bot and a foundation for future backend and cloud inte
 
 - `/dice pieces sides` rolls dice and replies with their total.
 - Replies `hi` when a user sends `hello`.
+- Optional YouTube notifications for regular uploads and completed stream replays, with Mint Fantome's channel as the default.
 - Automatically loads slash commands and registers them globally with Discord when their definitions change. A hash stored in MongoDB avoids unnecessary registration.
 
-The code also contains shared scaffolding for module loading, Express webhook routes, cron jobs, embed notifications, and MongoDB module state. `src/modules` currently has no integrations. Module scope labels are informational; private/public access controls have not been implemented.
+The code also contains shared infrastructure for module loading, Express webhook routes, cron jobs, embed notifications, and MongoDB module state. The YouTube module uses scheduled polling; module scope labels are informational and private/public access controls have not been implemented.
 
 ## Stack and layout
 
@@ -18,7 +19,7 @@ Node.js (the Docker image uses Node 22), CommonJS, discord.js v14, Express, Mong
 src/index.js              Bot startup, command loading, and Discord events
 src/commands/            Slash commands and dice helpers
 src/core/                Database, modules, webhooks, scheduling, notifications
-src/modules/             Future integrations
+src/modules/             Platform integrations
 test/                    Automated regression tests
 .github/workflows/ci.yml GitHub Actions checks
 ```
@@ -45,6 +46,26 @@ npm start
 
 Startup connects to MongoDB before logging into Discord. Once ready, it loads modules, starts the webhook server, and registers changed global slash commands.
 
+## YouTube upload notifications
+
+Enable YouTube Data API v3 in a Google Cloud project and create an API key restricted to that API. Add the following to `.env`:
+
+```dotenv
+YOUTUBE_API_KEY=your-youtube-data-api-key
+YOUTUBE_DISCORD_CHANNEL_ID=destination-discord-channel-id
+YOUTUBE_CHANNEL_ID=UCcHHkJ98eSfa5aj0mdTwwLQ
+```
+
+The channel ID defaults to Mint Fantome's channel and can be changed. Both the API key and Discord destination are required to enable the scheduled job. The bot needs View Channel, Send Messages, and Embed Links permissions in the destination channel.
+
+Every two hours, the module reads the channel feed and checks video metadata through the [YouTube Data API](https://developers.google.com/youtube/data/reference/rest/v3/videos). Regular uploads must be public and processed. Stream replays must also have an actual end time and no longer be marked live or upcoming. These metadata checks cannot guarantee playback availability in every region or for every viewer.
+
+The first successful check silently records existing available videos. Streams that are still live or scheduled remain pending, including after they leave the feed. Subsequent checks announce newly available uploads and replays, oldest first. MongoDB preserves progress across restarts, retaining the latest 500 completed IDs plus unresolved pending IDs. Deleted or permanently unavailable pending videos currently require manual state cleanup. Changing the source or destination creates a new baseline.
+
+Requests time out after 15 seconds, overlapping checks are skipped, and failed deliveries remain eligible for retry. A crash after Discord accepts a message but before MongoDB saves progress can produce a duplicate. Because discovery uses a limited recent feed, videos that enter and leave the feed entirely during extended downtime can be missed. Monitor API quota and polling errors in the bot logs. No public webhook or Cloudflare Worker is required.
+
+After configuring `.env`, recreate the container with the deployment command below. Polls run at minute zero every two hours in the container's timezone; the first poll occurs at the next scheduled time. Notifications may arrive up to two hours after a video becomes available. Tests use simulated feeds and API responses and do not require a real key.
+
 ## Docker deployment
 
 The existing Compose service builds the production image, loads `.env`, exposes port 3000, restarts unless stopped, and rotates Docker logs. MongoDB is configured through `MONGO_DB`; Compose does not provision a database. When running in Docker, `localhost` refers to the bot container, so use a MongoDB address reachable from that container.
@@ -69,7 +90,7 @@ After the tests pass, CI validates Compose configuration, builds the production 
 
 ## Future plans
 
-- Integrations such as GitHub notifications, Docker/Obsidian statistics, Moodle events, and YouTube upload notifications.
+- Additional integrations such as GitHub notifications, Docker/Obsidian statistics, Moodle events, and X notifications.
 - Private and public feature access controls so personal integrations can coexist with features available to other servers.
 - A shared Cloudflare Worker webhook receiver, decoupled from the bot, that can serve multiple bots.
 - Further development as a backend/cloud engineering showcase project.
