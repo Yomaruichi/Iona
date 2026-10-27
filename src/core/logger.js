@@ -9,22 +9,34 @@ function safeError(error) {
     };
 }
 
-function sanitize(key, value) {
-    if (/token|secret|password|credential|authorization|api.?key|mongo.?db|uri|url/i.test(key) && typeof value !== 'boolean') return '[REDACTED]';
-    if (value instanceof Error) return safeError(value);
-    if (value && typeof value === 'object') {
-        if (Array.isArray(value)) return value.map(item => sanitize('item', item));
-        return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, sanitize(name, item)]));
-    }
-    if (typeof value !== 'string') return value;
+function isSecretVariable([name, secret]) {
+    return /token|secret|password|credential|api.?key|mongo.?db/i.test(name) && secret.length >= 4;
+}
+
+function sanitizeText(value) {
     let text = value;
-    for (const [name, secret] of Object.entries(process.env)) {
-        if (/token|secret|password|credential|api.?key|mongo.?db/i.test(name) && secret.length >= 4) {
-            text = text.split(secret).join('[REDACTED]');
-        }
+    for (const [, secret] of Object.entries(process.env).filter(isSecretVariable)) {
+        text = text.split(secret).join('[REDACTED]');
     }
     return text.replace(/(?:https?:\/\/|mongodb(?:\+srv)?:\/\/)[^\s]+/gi, '[REDACTED_URL]')
         .replace(/[\r\n\t]/g, ' ').slice(0, 512);
+}
+
+function sanitizeObject(value) {
+    if (Array.isArray(value)) return value.map(item => sanitize('item', item));
+    return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, sanitize(name, item)]));
+}
+
+function isSensitiveField(key, value) {
+    return /token|secret|password|credential|authorization|api.?key|mongo.?db|uri|url/i.test(key) && typeof value !== 'boolean';
+}
+
+function sanitize(key, value) {
+    if (isSensitiveField(key, value)) return '[REDACTED]';
+    if (value instanceof Error) return safeError(value);
+    if (value && typeof value === 'object') return sanitizeObject(value);
+    if (typeof value === 'string') return sanitizeText(value);
+    return value;
 }
 
 function createLogger(component, { sink } = {}) {

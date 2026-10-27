@@ -1,141 +1,128 @@
 const { createLogger, safeError } = require('../../core/logger');
+const { YouTubeApi } = require('./api');
+const { isAvailable, belongsToChannel, availableAt, parseVideoIds } = require('./videos');
 
-function isAvailable(video) {
-    if (video.status?.privacyStatus !== 'public' || video.status?.uploadStatus !== 'processed') return false;
-    if (['live', 'upcoming'].includes(video.snippet?.liveBroadcastContent)) return false;
-    // A broadcast must have ended; a regular upload has no streaming details.
-    return !video.liveStreamingDetails || Boolean(video.liveStreamingDetails.actualEndTime);
+function needsBaseline(saved) {
+    if (!saved) return true;
+    if (saved.initialized) return false;
+    return saved.seen.length === 0 && saved.pending.length === 0;
 }
 
-function parseVideoIds(xml) {
-    if (!/<feed(?:\s|>)/.test(xml) || !xml.includes('</feed>')) throw new Error('Invalid YouTube feed');
-    return [...new Set([...xml.matchAll(/<yt:videoId>\s*([A-Za-z0-9_-]{11})\s*<\/yt:videoId>/g)].map(match => match[1]))];
+function candidateIds(state, discovered) {
+    const unseen = discovered.filter(id => !state.seen.includes(id));
+    return [...new Set([...state.pending, ...unseen])];
 }
 
-function createUploadChecker({ apiKey, destination, channelId, db, notify, fetchImpl = fetch, log }) {
-    let running = false;
-    const stateKey = `${channelId}:${destination}`;
-    const logger = createLogger('youtube', { sink: log });
-
-    async function api(resource, parameters, metrics) {
-        metrics.apiRequests++;
-        // INFO before a Data API request; resource names the endpoint and apiRequests counts attempts.
-        logger.info('api_request_started', { resource, apiRequests: metrics.apiRequests });
-        const url = new URL(`https://www.googleapis.com/youtube/v3/${resource}`);
-        url.search = new URLSearchParams({ key: apiKey, ...parameters });
-        const result = await request(url.toString(), 'json', resource);
-        if (!Array.isArray(result.items)) throw new Error(`Invalid YouTube ${resource} response`);
-        // INFO after metadata validation; itemCount is the number of returned resources.
-        logger.info('api_request_completed', { resource, itemCount: result.items.length });
-        return result.items;
+class UploadChecker {
+    constructor({ apiKey, destination, channelId, db, notify, fetchImpl, log }) {
+        this.destination = destination;
+        this.channelId = channelId;
+        this.db = db;
+        this.notify = notify;
+        this.stateKey = `${channelId}:${destination}`;
+        this.log = createLogger('youtube', { sink: log });
+        this.api = new YouTubeApi({ apiKey, fetchImpl, logger: this.log });
+        this.running = false;
     }
 
-    async function request(url, format, resource = 'feed') {
-        try {
-            // DEBUG before transport; resource is a safe endpoint label, never the actual request URL.
-            logger.debug('transport_started', { resource });
-            const response = await fetchImpl(url, { signal: AbortSignal.timeout(15000) });
-            if (!response.ok) {
-                const error = new Error(`YouTube request failed (${response.status})`);
-                error.code = `HTTP_${response.status}`;
-                throw error;
-            }
-            const result = await response[format]();
-            // DEBUG after the response body decodes; status reports HTTP completion, not valid business data.
-            logger.debug('transport_completed', { resource, status: response.status });
-            return result;
-        } catch (error) {
-            // ERROR when transport, HTTP, or decoding fails; resource omits the credential-bearing URL.
-            logger.error('request_failed', { resource, ...safeError(error), nextAction: 'abort_check' });
-            throw error;
+    async discover(feed, state) {
+        const feedIds = parseVideoIds(feed);
+        if (feedIds.length) return feedIds;
+        // WARN for an empty feed; continue through the official uploads playlist.
+        this.log.warn('feed_empty', { nextAction: 'uploads_playlist_fallback' });
+        if (!state.uploadsPlaylistId) state.uploadsPlaylistId = await this.api.playlist(this.channelId);
+        const ids = await this.api.uploads(state.uploadsPlaylistId);
+        if (!ids.length && !state.pending.length) {
+            throw new Error('YouTube discovery returned no videos; state was not updated');
+        }
+        return ids;
+    }
+
+    async availableVideos(candidates) {
+        const videos = await this.api.videos(candidates);
+        const available = videos.filter(video => belongsToChannel(video, this.channelId));
+        // INFO after metadata filtering; deferred includes unfinished or inaccessible candidates.
+        this.log.info('availability_checked', { candidates: candidates.length, available: available.length, deferred: candidates.length - available.length });
+        return available.sort((left, right) => availableAt(left) - availableAt(right));
+    }
+
+    save(state) {
+        return this.db.setState('youtube', this.stateKey, state);
+    }
+
+    summary(state, started) {
+        return {
+            seen: state.seen.length, pending: state.pending.length,
+            apiRequests: this.api.requests, elapsedMs: Date.now() - started,
+        };
+    }
+
+    async baseline(state, available, started) {
+        state.seen = available.map(video => video.id);
+        state.pending = state.pending.filter(id => !state.seen.includes(id));
+        state.initialized = true;
+        await this.save(state);
+        // INFO after persisting a quiet baseline, including repair of legacy empty records.
+        this.log.info('baseline_saved', this.summary(state, started));
+    }
+
+    async announce(state, available) {
+        await this.save(state);
+        for (const video of available) {
+            await this.notify(this.destination, {
+                title: video.snippet.title.slice(0, 256),
+                body: video.liveStreamingDetails ? 'Stream replay is available.' : 'New video uploaded.',
+                url: `https://www.youtube.com/watch?v=${video.id}`,
+            });
+            state.seen = [...state.seen, video.id].slice(-500);
+            state.pending = state.pending.filter(id => id !== video.id);
+            await this.save(state);
         }
     }
 
-    return async function checkUploads() {
-        if (running) {
-            // INFO for an intentional overlap skip; the original check remains responsible for progress.
-            logger.info('check_skipped', { reason: 'already_running', channelId });
+    async poll(started) {
+        this.api.requests = 0;
+        const feed = await this.api.feed(this.channelId);
+        const saved = await this.db.getState('youtube', this.stateKey);
+        const initialize = needsBaseline(saved);
+        const state = saved || { seen: [], pending: [] };
+        const discovered = await this.discover(feed, state);
+        // INFO after discovery; counts describe unique discovered IDs and previously unresolved videos.
+        this.log.info('discovery_completed', { discovered: discovered.length, pending: state.pending.length });
+        const candidates = candidateIds(state, discovered);
+        const available = await this.availableVideos(candidates);
+        state.pending = candidates;
+        if (initialize) return this.baseline(state, available, started);
+        await this.announce(state, available);
+        // INFO after delivery and persistence; zero counts expose normal no-work checks.
+        this.log.info('check_completed', { ...this.summary(state, started), notified: available.length });
+    }
+
+    async checkUploads() {
+        if (this.running) {
+            // INFO when a previous check is still active; the original run retains responsibility for progress.
+            this.log.info('check_skipped', { reason: 'already_running', channelId: this.channelId });
             return;
         }
-        running = true;
+        this.running = true;
         const started = Date.now();
-        // INFO at the beginning of each poll; started correlates the lifecycle with host timestamps.
-        logger.info('check_started', { channelId, started });
+        // INFO at poll startup; started correlates this execution with host timestamps.
+        this.log.info('check_started', { channelId: this.channelId, started });
         try {
-            const metrics = { apiRequests: 0, notified: 0 };
-            const feed = await request(`https://www.youtube.com/xml/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`, 'text');
-            let feedIds = parseVideoIds(feed);
-            const saved = await db.getState('youtube', stateKey);
-            const emptyLegacyState = saved && !saved.initialized && !saved.seen.length && !saved.pending.length;
-            const state = saved || { seen: [], pending: [] };
-            if (!feedIds.length) {
-                // WARN for an empty feed; discovery continues through the official uploads playlist.
-                logger.warn('feed_empty', { nextAction: 'uploads_playlist_fallback' });
-                if (!state.uploadsPlaylistId) {
-                    const channels = await api('channels', { part: 'contentDetails', id: channelId }, metrics);
-                    state.uploadsPlaylistId = channels[0]?.contentDetails?.relatedPlaylists?.uploads;
-                    if (!state.uploadsPlaylistId) throw new Error('YouTube channel has no accessible uploads playlist');
-                }
-                const uploads = await api('playlistItems', {
-                    part: 'contentDetails', playlistId: state.uploadsPlaylistId, maxResults: '50',
-                }, metrics);
-                feedIds = [...new Set(uploads.map(item => item.contentDetails?.videoId)
-                    .filter(id => typeof id === 'string' && /^[A-Za-z0-9_-]{11}$/.test(id)))];
-                if (!feedIds.length && !state.pending.length) throw new Error('YouTube discovery returned no videos; state was not updated');
-            }
-            // INFO after discovery; discovered counts unique IDs and pending counts previously unresolved videos.
-            logger.info('discovery_completed', { discovered: feedIds.length, pending: state.pending.length });
-            const candidates = [...new Set([...state.pending, ...feedIds.filter(id => !state.seen.includes(id))])];
-            const videos = [];
-            for (let offset = 0; offset < candidates.length; offset += 50) {
-                const items = await api('videos', {
-                    part: 'snippet,status,liveStreamingDetails',
-                    id: candidates.slice(offset, offset + 50).join(','),
-                }, metrics);
-                videos.push(...items);
-            }
-
-            // Keep unresolved IDs even after they leave the short channel feed.
-            state.pending = candidates;
-            const available = videos.filter(video => video.snippet?.channelId === channelId && isAvailable(video));
-            // INFO after availability filtering; deferred includes inaccessible or unfinished candidates.
-            logger.info('availability_checked', { candidates: candidates.length, available: available.length, deferred: candidates.length - available.length });
-            available.sort((a, b) => Date.parse(a.liveStreamingDetails?.actualEndTime || a.snippet.publishedAt)
-                - Date.parse(b.liveStreamingDetails?.actualEndTime || b.snippet.publishedAt));
-
-            if (!saved || emptyLegacyState) {
-                // Establish a quiet baseline; live/upcoming videos remain pending for later.
-                state.seen = available.map(video => video.id);
-                state.pending = candidates.filter(id => !state.seen.includes(id));
-                state.initialized = true;
-                await db.setState('youtube', stateKey, state);
-                // INFO after persisting the quiet baseline, including repair of legacy empty records.
-                logger.info('baseline_saved', { seen: state.seen.length, pending: state.pending.length, apiRequests: metrics.apiRequests, elapsedMs: Date.now() - started });
-                return;
-            }
-
-            await db.setState('youtube', stateKey, state);
-            for (const video of available) {
-                await notify(destination, {
-                    title: video.snippet.title.slice(0, 256),
-                    body: video.liveStreamingDetails ? 'Stream replay is available.' : 'New video uploaded.',
-                    url: `https://www.youtube.com/watch?v=${video.id}`,
-                });
-                state.seen = [...state.seen, video.id].slice(-500);
-                state.pending = state.pending.filter(id => id !== video.id);
-                await db.setState('youtube', stateKey, state);
-                metrics.notified++;
-            }
-            // INFO after delivery and persistence; zero counts explicitly expose successful no-work checks.
-            logger.info('check_completed', { ...metrics, seen: state.seen.length, pending: state.pending.length, elapsedMs: Date.now() - started });
+            await this.poll(started);
         } catch (error) {
-            // ERROR for an unsuccessful check; running is reset and the next scheduled run may retry.
-            logger.error('check_failed', { channelId, ...safeError(error), elapsedMs: Date.now() - started, nextAction: 'next_scheduled_run' });
+            // ERROR for an unsuccessful poll; release the overlap guard and allow the next scheduled retry.
+            this.log.error('check_failed', { channelId: this.channelId, ...safeError(error), elapsedMs: Date.now() - started, nextAction: 'next_scheduled_run' });
             throw error;
         } finally {
-            running = false;
+            this.running = false;
         }
-    };
+    }
+}
+
+function createUploadChecker(options) {
+    const checker = new UploadChecker(options);
+    return checker.checkUploads.bind(checker);
 }
 
 module.exports = { createUploadChecker, isAvailable, parseVideoIds };

@@ -48,6 +48,21 @@ test('INFO remains visible by default while TRACE and DEBUG are opt-in', t => {
     assert.equal(output.length, 3);
 });
 
+test('redaction traverses arrays and objects while preserving nulls and safe configuration booleans', () => {
+    const output = [];
+    const log = createLogger('test', { sink: line => output.push(line) });
+    log.info('configuration', {
+        apiKeyConfigured: true, missing: null,
+        entries: [{ password: 'hidden-password', count: 2 }, 'https://example.com/?key=hidden'],
+    });
+
+    assert.match(output[0], /apiKeyConfigured=true/);
+    assert.match(output[0], /missing=null/);
+    assert.match(output[0], /"count":2/);
+    assert.ok(!output[0].includes('hidden-password'));
+    assert.ok(!output[0].includes('key=hidden'));
+});
+
 test('failed notifications emit an error without claiming successful delivery', async t => {
     const output = [];
     t.mock.method(console, 'log', line => output.push(line));

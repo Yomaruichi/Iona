@@ -1,8 +1,24 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { sendLatestVideoTest } = require('../src/tools/simulateYoutube');
+const { sendLatestVideoTest, readConfiguration } = require('../src/tools/simulateYoutube');
 
 const channelId = 'mint-channel';
+
+test('manual test configuration lists missing variable names without exposing supplied credentials', () => {
+    assert.throws(() => readConfiguration({ DISCORD_TOKEN: 'private-value' }), error => {
+        assert.equal(error.code, 'MISSING_CONFIGURATION');
+        assert.match(error.message, /YOUTUBE_API_KEY/);
+        assert.match(error.message, /YOUTUBE_DISCORD_CHANNEL_ID/);
+        assert.ok(!error.message.includes('private-value'));
+        return true;
+    });
+});
+
+test('manual test configuration preserves a channel override and defaults to Mint when omitted', () => {
+    const env = { DISCORD_TOKEN: 'token', YOUTUBE_DISCORD_CHANNEL_ID: 'destination', YOUTUBE_API_KEY: 'key' };
+    assert.equal(readConfiguration(env).channelId, 'UCcHHkJ98eSfa5aj0mdTwwLQ');
+    assert.equal(readConfiguration({ ...env, YOUTUBE_CHANNEL_ID: 'other-channel' }).channelId, 'other-channel');
+});
 
 function video(id, publishedAt, overrides = {}) {
     return {

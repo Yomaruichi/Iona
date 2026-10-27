@@ -5,6 +5,22 @@ const { fetchLatestVideo } = require('../modules/youtube/latestVideo');
 const { createLogger, safeError } = require('../core/logger');
 const log = createLogger('youtube-simulation');
 
+function readConfiguration(env) {
+    const required = ['DISCORD_TOKEN', 'YOUTUBE_DISCORD_CHANNEL_ID', 'YOUTUBE_API_KEY'];
+    const missing = required.filter(name => !env[name]);
+    if (missing.length) {
+        const error = new Error(`Missing required configuration: ${missing.join(', ')}`);
+        error.code = 'MISSING_CONFIGURATION';
+        throw error;
+    }
+    return {
+        token: env.DISCORD_TOKEN,
+        destination: env.YOUTUBE_DISCORD_CHANNEL_ID,
+        apiKey: env.YOUTUBE_API_KEY,
+        channelId: env.YOUTUBE_CHANNEL_ID || 'UCcHHkJ98eSfa5aj0mdTwwLQ',
+    };
+}
+
 async function sendLatestVideoTest({ apiKey, destination, channelId, fetchImpl = fetch, notify = notifications.notify }) {
     const video = await fetchLatestVideo({ apiKey, channelId, fetchImpl });
     if (!video) {
@@ -26,14 +42,7 @@ async function main() {
     require('dotenv').config();
     // INFO at test startup; YouTube requests and Discord delivery are real, with no state writes.
     log.info('started', { mode: 'real_youtube_real_discord', databaseWrites: 0 });
-    const destination = process.env.YOUTUBE_DISCORD_CHANNEL_ID;
-    const apiKey = process.env.YOUTUBE_API_KEY;
-    if (!process.env.DISCORD_TOKEN || !destination || !apiKey) {
-        const error = new Error('DISCORD_TOKEN, YOUTUBE_DISCORD_CHANNEL_ID and YOUTUBE_API_KEY are required');
-        error.code = 'MISSING_CONFIGURATION';
-        throw error;
-    }
-    const channelId = process.env.YOUTUBE_CHANNEL_ID || 'UCcHHkJ98eSfa5aj0mdTwwLQ';
+    const { token, destination, apiKey, channelId } = readConfiguration(process.env);
     const client = new Client({ intents: [GatewayIntentBits.Guilds] });
     let timeout;
     try {
@@ -47,7 +56,7 @@ async function main() {
         });
         // INFO before Discord login; the token is deliberately excluded.
         log.info('login_started');
-        await Promise.race([Promise.all([client.login(process.env.DISCORD_TOKEN), ready]), deadline]);
+        await Promise.race([Promise.all([client.login(token), ready]), deadline]);
         clearTimeout(timeout);
         // INFO after gateway readiness; live API discovery can now proceed.
         log.info('discord_ready');
@@ -69,4 +78,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { sendLatestVideoTest };
+module.exports = { sendLatestVideoTest, readConfiguration };

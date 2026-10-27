@@ -32,7 +32,7 @@ function setup(initialState = null) {
         },
         fetchImpl: async url => {
             if (fixture.failRequest) return { ok: false, status: 503 };
-            if (url.includes('/channels?')) return { ok: true, json: async () => ({ items: [{ contentDetails: { relatedPlaylists: { uploads: 'uploads-playlist' } } }] }) };
+            if (url.includes('/channels?')) return { ok: true, json: async () => ({ items: [{ id: channelId, contentDetails: { relatedPlaylists: { uploads: 'uploads-playlist' } } }] }) };
             if (url.includes('/playlistItems?')) return { ok: true, json: async () => ({ items: [] }) };
             if (url.includes('/xml/feeds/')) return {
                 ok: true,
@@ -172,7 +172,7 @@ test('a static empty feed triggers API discovery and quietly repairs the legacy 
             if (path.includes('/xml/feeds/')) return { ok: true, text: async () => '<feed><title>YouTube video feed</title></feed>' };
             apiPaths.push(path);
             const items = path.endsWith('/channels')
-                ? [{ contentDetails: { relatedPlaylists: { uploads: 'uploads-playlist' } } }]
+                ? [{ id: channelId, contentDetails: { relatedPlaylists: { uploads: 'uploads-playlist' } } }]
                 : path.endsWith('/playlistItems') ? [{ contentDetails: { videoId: uploadId } }] : [video(uploadId)];
             return { ok: true, json: async () => ({ items }) };
         },
@@ -199,9 +199,35 @@ test('empty feed and empty uploads playlist fail visibly without saving a false 
         fetchImpl: async url => {
             if (url.includes('/xml/feeds/')) return { ok: true, text: async () => '<feed></feed>' };
             return { ok: true, json: async () => ({ items: url.includes('/channels?')
-                ? [{ contentDetails: { relatedPlaylists: { uploads: 'uploads-playlist' } } }] : [] }) };
+                ? [{ id: channelId, contentDetails: { relatedPlaylists: { uploads: 'uploads-playlist' } } }] : [] }) };
         },
     });
     await assert.rejects(check(), /discovery returned no videos/);
     assert.equal(fixture.state(), null);
+});
+
+test('a delivery failure preserves earlier successful sends and retries only the remaining video', async () => {
+    const fixture = setup({ seen: [], pending: [] });
+    fixture.feedIds = [uploadId, streamId];
+    fixture.videos.push(video(streamId, {
+        snippet: { channelId, title: 'Later video', publishedAt: '2026-10-27T00:00:00Z' },
+    }));
+    let attempts = 0;
+    const deliver = fixture.options.notify;
+    fixture.options.notify = async (...args) => {
+        attempts++;
+        if (attempts === 2) throw new Error('Discord unavailable');
+        return deliver(...args);
+    };
+    const check = createUploadChecker(fixture.options);
+
+    // Persist each successful delivery so a later failed send cannot replay the whole batch.
+    await assert.rejects(check(), /Discord unavailable/);
+    assert.deepEqual(fixture.state().seen, [uploadId]);
+    assert.deepEqual(fixture.state().pending, [streamId]);
+    await check();
+
+    assert.equal(fixture.messages.length, 2);
+    assert.deepEqual(fixture.state().seen, [uploadId, streamId]);
+    assert.deepEqual(fixture.state().pending, []);
 });

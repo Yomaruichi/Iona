@@ -5,6 +5,28 @@ const { registerJob } = require('./scheduler');
 const { createLogger } = require('./logger');
 const log = createLogger('modules');
 
+function moduleCapabilities(mod) {
+    return {
+        name: mod.name,
+        scope: mod.scope || 'public',
+        commands: mod.commands || [],
+        webhookRoutes: mod.webhookRoutes || [],
+        cronJobs: mod.cronJobs || [],
+    };
+}
+
+function registerModule(client, definition) {
+    const mod = moduleCapabilities(definition);
+    mod.commands.forEach(command => client.commands.set(command.data.name, command));
+    mod.webhookRoutes.forEach(route => registerRoute(route.path, route.middleware || [], route.handler));
+    mod.cronJobs.forEach(job => registerJob(job.schedule, job.task, `${mod.name}:${job.label || 'job'}`));
+    // INFO after registering capabilities; scope is informational and counts describe enabled features.
+    log.info('loaded', {
+        name: mod.name, scope: mod.scope,
+        commands: mod.commands.length, routes: mod.webhookRoutes.length, jobs: mod.cronJobs.length,
+    });
+}
+
 function loadModules(client) {
     const modulesPath = path.join(__dirname, '..', 'modules');
     if (!fs.existsSync(modulesPath)) {
@@ -21,13 +43,8 @@ function loadModules(client) {
         log.info('loading_started', { folder: folder.name });
         const mod = require(path.join(modulesPath, folder.name, 'index.js'));
 
-        mod.commands?.forEach(cmd => client.commands.set(cmd.data.name, cmd));
-        mod.webhookRoutes?.forEach(r => registerRoute(r.path, r.middleware || [], r.handler));
-        mod.cronJobs?.forEach(job => registerJob(job.schedule, job.task, `${mod.name}:${job.label || 'job'}`));
-
-        // INFO after registration; counts describe enabled module capabilities, scope is informational.
-        log.info('loaded', { name: mod.name, scope: mod.scope || 'public', commands: mod.commands?.length || 0, routes: mod.webhookRoutes?.length || 0, jobs: mod.cronJobs?.length || 0 });
+        registerModule(client, mod);
     }
 }
 
-module.exports = { loadModules };
+module.exports = { loadModules, registerModule };
