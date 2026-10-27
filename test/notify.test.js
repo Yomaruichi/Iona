@@ -25,3 +25,8 @@ test('notifications reject calls before initialization and send the supplied emb
     assert.equal(deliveredEmbed.url, 'https://example.com');
     assert.ok(Number.isFinite(Date.parse(deliveredEmbed.timestamp)));
 });
+
+test('an unavailable notification channel rejects delivery so callers can retry', async () => {
+    notifications.init({ channels: { fetch: async () => null } });
+    await assert.rejects(notifications.notify('missing', { title: 'Upload' }), /channel missing not found/);
+});
