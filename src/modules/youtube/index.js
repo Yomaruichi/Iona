@@ -1,23 +1,20 @@
 const db = require('../../core/db');
 const { notify } = require('../../core/notify');
-const { createUploadChecker } = require('./uploads');
+const { createMonitoringJobs } = require('./monitoring');
+const { readChannelIds } = require('./config');
 const { createLogger } = require('../../core/logger');
 const log = createLogger('youtube');
 
 const apiKey = process.env.YOUTUBE_API_KEY;
 const destination = process.env.YOUTUBE_DISCORD_CHANNEL_ID;
-const channelId = process.env.YOUTUBE_CHANNEL_ID || 'UCcHHkJ98eSfa5aj0mdTwwLQ';
+const channelIds = readChannelIds(process.env);
 
-// INFO at module initialization; booleans expose missing configuration without printing key values.
+// INFO at initialization; channelCount describes configured sources and booleans expose missing credentials safely.
 log.info(apiKey && destination ? 'monitoring_enabled' : 'monitoring_disabled', {
-    apiKeyConfigured: Boolean(apiKey), destinationConfigured: Boolean(destination), schedule: '0 */1 * * *',
+    apiKeyConfigured: Boolean(apiKey), destinationConfigured: Boolean(destination), channelCount: channelIds.length, schedule: '0 */1 * * *',
 });
 
 module.exports = {
     name: 'youtube',
-    cronJobs: apiKey && destination ? [{
-        schedule: '0 */1 * * *',
-        label: 'uploads',
-        task: createUploadChecker({ apiKey, destination, channelId, db, notify }),
-    }] : [],
+    cronJobs: apiKey && destination ? createMonitoringJobs({ apiKey, destination, channelIds, db, notify }) : [],
 };

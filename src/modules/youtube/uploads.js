@@ -52,7 +52,7 @@ class UploadChecker {
 
     summary(state, started) {
         return {
-            seen: state.seen.length, pending: state.pending.length,
+            channelId: this.channelId, seen: state.seen.length, pending: state.pending.length,
             apiRequests: this.api.requests, elapsedMs: Date.now() - started,
         };
     }

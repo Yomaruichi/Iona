@@ -6,7 +6,7 @@ Iona is a modular Discord bot and a foundation for future backend and cloud inte
 
 - `/dice pieces sides` rolls dice and replies with their total.
 - Replies `hi` when a user sends `hello`.
-- Optional YouTube notifications for regular uploads and completed stream replays, with Mint Fantome's channel as the default.
+- Optional YouTube notifications for regular uploads and completed stream replays from multiple channels, with Mint Fantome as the default source.
 - Automatically loads slash commands and registers them globally with Discord when their definitions change. A hash stored in MongoDB avoids unnecessary registration.
 
 The code also contains shared infrastructure for module loading, Express webhook routes, cron jobs, embed notifications, and MongoDB module state. The YouTube module uses scheduled polling; module scope labels are informational and private/public access controls have not been implemented.
@@ -58,11 +58,19 @@ YOUTUBE_DISCORD_CHANNEL_ID=destination-discord-channel-id
 YOUTUBE_CHANNEL_ID=UCcHHkJ98eSfa5aj0mdTwwLQ
 ```
 
-The channel ID defaults to Mint Fantome's channel and can be changed. Both the API key and Discord destination are required to enable the scheduled job. The bot needs View Channel, Send Messages, and Embed Links permissions in the destination channel.
+For multiple YouTube channels, set `YOUTUBE_CHANNEL_IDS` to a comma-separated list in `.env` or Heroku Config Vars:
+
+```dotenv
+YOUTUBE_CHANNEL_IDS=UCcHHkJ98eSfa5aj0mdTwwLQ,ANOTHER_YOUTUBE_CHANNEL_ID
+```
+
+Replace the second value with the creator's actual channel ID. `YOUTUBE_CHANNEL_IDS` takes precedence over the existing `YOUTUBE_CHANNEL_ID`. Whitespace and duplicate IDs are removed. When neither variable is set, Mint Fantome remains the default. All configured sources post to `YOUTUBE_DISCORD_CHANNEL_ID`; per-source Discord destinations are not configured in this version.
+
+Both the API key and Discord destination are required to enable monitoring. Each source has a separate hourly job and MongoDB record using the existing `sourceChannelId:destinationChannelId` key, so existing state is preserved. New sources receive their own quiet baseline. One source's failure does not stop the others. The bot needs View Channel, Send Messages, and Embed Links permissions in the destination channel.
 
 Every hour, the module reads the channel feed and checks video metadata through the [YouTube Data API](https://developers.google.com/youtube/data/reference/rest/v3/videos). Regular uploads must be public and processed. Stream replays must also have an actual end time and no longer be marked live or upcoming. These metadata checks cannot guarantee playback availability in every region or for every viewer.
 
-Discovery reads the feed first. If it contains no video IDs, the module falls back to the channel's uploads playlist through `channels.list` and `playlistItems.list`, caching the playlist ID in MongoDB. No search API is used. Metadata checks use `videos.list` with up to 50 candidate IDs per batch. Each of these Data API calls costs one quota unit. With the fallback active, each hourly check uses one discovery call plus any metadata batches (typically 24–48 units per day, plus initial channel lookup). Logs identify each requested API endpoint and summarize video counts and API requests.
+Discovery reads the feed first. If it contains no video IDs, the module falls back to the channel's uploads playlist through `channels.list` and `playlistItems.list`, caching the playlist ID in MongoDB. No search API is used. Metadata checks use `videos.list` with up to 50 candidate IDs per batch. Each of these Data API calls costs one quota unit. With the fallback active, each source's hourly check uses one discovery call plus any metadata batches (typically 24–48 units per day per source, plus initial channel lookup). All sources share the API project's quota. Logs identify requested endpoints, and job labels and check summaries identify the source channel.
 
 The first successful check silently records existing available videos. Streams that are still live or scheduled remain pending, including after they leave the feed. Subsequent checks announce newly available uploads and replays, oldest first. MongoDB preserves progress across restarts, retaining the latest 500 completed IDs plus unresolved pending IDs. Deleted or permanently unavailable pending videos currently require manual state cleanup. Changing the source or destination creates a new baseline.
 
@@ -78,7 +86,7 @@ The current hosting target is one Basic worker dyno. Discord connections and You
 worker: node src/index.js
 ```
 
-The checked-in `Procfile` currently declares `web: node src/index.js`; change that declaration to `worker` before using this worker deployment configuration. Run only one bot process to avoid duplicate notifications.
+Run only one bot process to avoid duplicate notifications.
 
 In the Heroku dashboard, open **Settings → Reveal Config Vars** and configure:
 
@@ -90,6 +98,7 @@ In the Heroku dashboard, open **Settings → Reveal Config Vars** and configure:
 | `YOUTUBE_API_KEY` | YouTube Data API v3 key; enables monitoring with a destination |
 | `YOUTUBE_DISCORD_CHANNEL_ID` | Destination Discord channel for notifications |
 | `YOUTUBE_CHANNEL_ID` | Optional source channel override; defaults to Mint Fantome |
+| `YOUTUBE_CHANNEL_IDS` | Optional comma-separated source IDs; overrides `YOUTUBE_CHANNEL_ID` |
 
 The local `.env` file is not deployed automatically. A missing `MONGO_DB` causes startup to fail with an undefined URI error. A database on `localhost` or an ark-only LAN address is not reachable from Heroku; use an externally reachable database and configure its network access for the hosted application.
 
@@ -103,6 +112,13 @@ To verify real discovery and API access from Heroku's Run Console without sendin
 
 ```sh
 node src/tools/checkYoutube.js
+```
+
+Both manual tools use the first configured source by default. To inspect another configured source, pass its channel ID as the first argument:
+
+```sh
+node src/tools/checkYoutube.js ANOTHER_YOUTUBE_CHANNEL_ID
+node src/tools/simulateYoutube.js ANOTHER_YOUTUBE_CHANNEL_ID
 ```
 
 This diagnostic uses real YouTube requests and consumes their normal quota. An old empty `seen`/`pending` record without an initialization flag is quietly baselined on the next successful production check, preventing a flood of historical notifications.
