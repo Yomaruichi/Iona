@@ -4,8 +4,9 @@ const notifications = require('../core/notify');
 const { fetchLatestVideo } = require('../modules/youtube/latestVideo');
 const { createLogger, safeError } = require('../core/logger');
 const log = createLogger('youtube-simulation');
+const { selectChannel } = require('../modules/youtube/config');
 
-function readConfiguration(env) {
+function readConfiguration(env, requestedChannel) {
     const required = ['DISCORD_TOKEN', 'YOUTUBE_DISCORD_CHANNEL_ID', 'YOUTUBE_API_KEY'];
     const missing = required.filter(name => !env[name]);
     if (missing.length) {
@@ -17,7 +18,7 @@ function readConfiguration(env) {
         token: env.DISCORD_TOKEN,
         destination: env.YOUTUBE_DISCORD_CHANNEL_ID,
         apiKey: env.YOUTUBE_API_KEY,
-        channelId: env.YOUTUBE_CHANNEL_ID || 'UCcHHkJ98eSfa5aj0mdTwwLQ',
+        channelId: selectChannel(env, requestedChannel),
     };
 }
 
@@ -42,7 +43,9 @@ async function main() {
     require('dotenv').config();
     // INFO at test startup; YouTube requests and Discord delivery are real, with no state writes.
     log.info('started', { mode: 'real_youtube_real_discord', databaseWrites: 0 });
-    const { token, destination, apiKey, channelId } = readConfiguration(process.env);
+    const { token, destination, apiKey, channelId } = readConfiguration(process.env, process.argv[2]);
+    // INFO after source selection; channelId identifies which configured creator is being tested.
+    log.info('channel_selected', { channelId });
     const client = new Client({ intents: [GatewayIntentBits.Guilds] });
     let timeout;
     try {

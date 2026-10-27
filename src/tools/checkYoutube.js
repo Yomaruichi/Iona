@@ -3,6 +3,7 @@ const db = require('../core/db');
 const { createUploadChecker } = require('../modules/youtube/uploads');
 const { createLogger, safeError } = require('../core/logger');
 const log = createLogger('youtube-diagnostic');
+const { selectChannel } = require('../modules/youtube/config');
 
 async function main() {
     // INFO at tool startup; this run uses real requests but performs no writes or sends.
@@ -10,10 +11,13 @@ async function main() {
     if (!process.env.YOUTUBE_API_KEY || !process.env.YOUTUBE_DISCORD_CHANNEL_ID) {
         throw new Error('YOUTUBE_API_KEY and YOUTUBE_DISCORD_CHANNEL_ID are required');
     }
+    const channelId = selectChannel(process.env, process.argv[2]);
+    // INFO after channel selection; channelId identifies which configured source the read-only check will inspect.
+    log.info('channel_selected', { channelId });
     await db.connect();
     const check = createUploadChecker({
         apiKey: process.env.YOUTUBE_API_KEY,
-        channelId: process.env.YOUTUBE_CHANNEL_ID || 'UCcHHkJ98eSfa5aj0mdTwwLQ',
+        channelId,
         destination: process.env.YOUTUBE_DISCORD_CHANNEL_ID,
         // Inspect production state without altering it or announcing historical videos.
         db: {
