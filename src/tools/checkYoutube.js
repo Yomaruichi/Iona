@@ -1,8 +1,12 @@
 require('dotenv').config();
 const db = require('../core/db');
 const { createUploadChecker } = require('../modules/youtube/uploads');
+const { createLogger, safeError } = require('../core/logger');
+const log = createLogger('youtube-diagnostic');
 
 async function main() {
+    // INFO at tool startup; this run uses real requests but performs no writes or sends.
+    log.info('started', { mode: 'read_only' });
     if (!process.env.YOUTUBE_API_KEY || !process.env.YOUTUBE_DISCORD_CHANNEL_ID) {
         throw new Error('YOUTUBE_API_KEY and YOUTUBE_DISCORD_CHANNEL_ID are required');
     }
@@ -15,18 +19,22 @@ async function main() {
         db: {
             getState: db.getState,
             setState: async (_module, _key, value) => {
-                console.log(`[youtube diagnostic] Would save seen=${value.seen.length}, pending=${value.pending.length}`);
+                // INFO for an intercepted write; counts describe proposed state without persisting it.
+                log.info('state_write_simulated', { seen: value.seen.length, pending: value.pending.length });
             },
         },
         notify: async (_channel, message) => {
-            console.log(`[youtube diagnostic] Would notify: ${message.url}`);
+            // INFO for an intercepted delivery; notification contents and links are deliberately omitted.
+            log.info('delivery_simulated', { channelId: process.env.YOUTUBE_DISCORD_CHANNEL_ID });
         },
     });
     await check();
-    console.log('[youtube diagnostic] Complete. No database writes or Discord messages were made.');
+    // INFO only after the diagnostic completes without real writes or messages.
+    log.info('completed', { databaseWrites: 0, discordMessages: 0 });
 }
 
 main().catch(error => {
-    console.error('[youtube diagnostic] Failed:', error.cause?.code || error.message);
+    // ERROR for a failed one-off diagnostic; the tool exits nonzero and the service is unaffected.
+    log.error('failed', { ...safeError(error), nextAction: 'exit_tool' });
     process.exitCode = 1;
 }).finally(() => db.mongoose.disconnect());

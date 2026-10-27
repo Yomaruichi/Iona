@@ -142,6 +142,14 @@ docker compose logs -f iona
 
 ## Troubleshooting connectivity
 
+### Process logs
+
+Application logs use `[TRACE]`, `[DEBUG]`, `[INFO]`, `[WARN]`, `[ERROR]`, and `[CRITICAL]`, followed by a UTC timestamp, component/event, and safe context fields. Each logging call has an adjacent specification describing its trigger and fields. Standard console output remains compatible with Heroku logs and its Datadog drain; no agent is required for these messages.
+
+`LOG_LEVEL` defaults to `INFO`. Set it to `DEBUG` for database state reads/writes and transport details, or `TRACE` for the most verbose level. `WARN` describes recoverable anomalies, `ERROR` describes a failed operation, and `CRITICAL` describes a service-blocking failure. Credentials, request URLs, raw error messages, and stored payloads are excluded or redacted.
+
+Startup includes a process ID; database events distinguish `connected`, `disconnected`, and `reconnected`. YouTube checks report API request attempts and returned counts, baseline saves, deferred videos, deliveries, and no-work runs. A failed request logs its safe classification (for example `EAI_AGAIN` or `HTTP_403`) and the next action. Success events appear only after their corresponding operation completes.
+
 `getaddrinfo EAI_AGAIN` indicates a DNS lookup failure before the request reaches Discord or YouTube. It is not an OAuth, channel permission, or API quota error. Check resolution and HTTPS connectivity from inside the deployed environment.
 
 The scheduler catches failed YouTube checks and tries again at the next scheduled time. Repeated `Connected to the database` messages can indicate Mongoose reconnecting; they do not by themselves prove a process restart. Correlate timestamped application logs with hosting restart events before diagnosing a crash.

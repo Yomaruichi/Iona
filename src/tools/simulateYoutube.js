@@ -3,8 +3,12 @@ const { once } = require('node:events');
 const { Client, GatewayIntentBits } = require('discord.js');
 const notifications = require('../core/notify');
 const { createUploadChecker } = require('../modules/youtube/uploads');
+const { createLogger, safeError } = require('../core/logger');
+const log = createLogger('youtube-simulation');
 
 async function main() {
+    // INFO when simulation begins; only Discord delivery is real.
+    log.info('started', { mode: 'fake_youtube_real_discord' });
     const destination = process.env.YOUTUBE_DISCORD_CHANNEL_ID;
     if (!process.env.DISCORD_TOKEN || !destination) {
         throw new Error('DISCORD_TOKEN and YOUTUBE_DISCORD_CHANNEL_ID are required');
@@ -13,15 +17,20 @@ async function main() {
     const videoId = 'SIMULATED01';
     const client = new Client({ intents: [GatewayIntentBits.Guilds] });
     const loginTimeout = setTimeout(() => {
-        console.error('Discord connection timed out');
+        // ERROR after the login deadline; the temporary client is destroyed and the tool exits nonzero.
+        log.error('login_timeout', { timeoutMs: 30000, nextAction: 'exit_tool' });
         client.destroy();
         process.exitCode = 1;
     }, 30000);
     try {
         const ready = once(client, 'clientReady');
+        // INFO before Discord login; credentials are excluded.
+        log.info('login_started');
         await client.login(process.env.DISCORD_TOKEN);
         await ready;
         clearTimeout(loginTimeout);
+        // INFO once the simulation client has received the gateway ready event.
+        log.info('discord_ready');
         notifications.init(client);
 
         // Use an initialized, empty in-memory store to simulate a newly discovered upload.
@@ -49,14 +58,18 @@ async function main() {
             },
         });
         await check();
-        console.log(`Simulated upload delivered to Discord channel ${destination}`);
+        // INFO after the real notification succeeds; destination identifies where to verify the test embed.
+        log.info('completed', { channelId: destination });
     } finally {
         clearTimeout(loginTimeout);
         client.destroy();
+        // INFO after disposing the temporary client; the main bot process is independent.
+        log.info('client_closed');
     }
 }
 
 main().catch(error => {
-    console.error('YouTube simulation failed:', error.message);
+    // ERROR for a failed simulation; classifications omit secrets and the tool exits nonzero.
+    log.error('failed', { ...safeError(error), nextAction: 'exit_tool' });
     process.exitCode = 1;
 });
