@@ -62,7 +62,7 @@ The channel ID defaults to Mint Fantome's channel and can be changed. Both the A
 
 Every hour, the module reads the channel feed and checks video metadata through the [YouTube Data API](https://developers.google.com/youtube/data/reference/rest/v3/videos). Regular uploads must be public and processed. Stream replays must also have an actual end time and no longer be marked live or upcoming. These metadata checks cannot guarantee playback availability in every region or for every viewer.
 
-Discovery uses the feed rather than the search API. Metadata checks use `videos.list`, costing one quota unit per request, with up to 50 candidate IDs per batch. When no new or pending videos exist, no Data API request is made. One batch on each hourly check would use 24 units per day.
+Discovery reads the feed first. If it contains no video IDs, the module falls back to the channel's uploads playlist through `channels.list` and `playlistItems.list`, caching the playlist ID in MongoDB. No search API is used. Metadata checks use `videos.list` with up to 50 candidate IDs per batch. Each of these Data API calls costs one quota unit. With the fallback active, each hourly check uses one discovery call plus any metadata batches (typically 24–48 units per day, plus initial channel lookup). Logs identify each requested API endpoint and summarize video counts and API requests.
 
 The first successful check silently records existing available videos. Streams that are still live or scheduled remain pending, including after they leave the feed. Subsequent checks announce newly available uploads and replays, oldest first. MongoDB preserves progress across restarts, retaining the latest 500 completed IDs plus unresolved pending IDs. Deleted or permanently unavailable pending videos currently require manual state cleanup. Changing the source or destination creates a new baseline.
 
@@ -98,6 +98,14 @@ After deploying, enable one worker and disable the web process if it exists. Che
 The Express listener uses `PORT`, then `WEBHOOK_PORT`, then `3000`. Heroku assigns `PORT` for a web dyno. A worker can run the listener internally, but Heroku does not route public HTTP requests to workers. Incoming webhooks will require a web process or separate receiver. No integration routes or signature verification are currently implemented.
 
 ## Simulate a YouTube notification
+
+To verify real discovery and API access from Heroku's Run Console without sending Discord messages or changing MongoDB state, run:
+
+```sh
+node src/tools/checkYoutube.js
+```
+
+Unlike the simulation below, this diagnostic uses real YouTube requests and consumes their normal quota. An old empty `seen`/`pending` record without an initialization flag is quietly baselined on the next successful production check, preventing a flood of historical notifications.
 
 The simulation sends one clearly labeled test embed to the configured Discord destination. It uses the real Discord connection and notification sender with fake feed/API responses and in-memory state. It uses no YouTube quota and makes no MongoDB changes. It verifies notification delivery and upload handling, but does not verify the API key, real feed access, or scheduler.
 

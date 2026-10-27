@@ -17,7 +17,7 @@ function video(id, overrides = {}) {
 
 function setup(initialState = null) {
     // Store copies, as MongoDB would, so unsaved mutations cannot make tests pass.
-    let storedState = structuredClone(initialState);
+    let storedState = initialState ? { initialized: true, ...structuredClone(initialState) } : null;
     const fixture = { feedIds: [uploadId], videos: [video(uploadId)], messages: [], failSend: false, failRequest: false };
     fixture.db = {
         getState: async () => structuredClone(storedState),
@@ -32,6 +32,8 @@ function setup(initialState = null) {
         },
         fetchImpl: async url => {
             if (fixture.failRequest) return { ok: false, status: 503 };
+            if (url.includes('/channels?')) return { ok: true, json: async () => ({ items: [{ contentDetails: { relatedPlaylists: { uploads: 'uploads-playlist' } } }] }) };
+            if (url.includes('/playlistItems?')) return { ok: true, json: async () => ({ items: [] }) };
             if (url.includes('/xml/feeds/')) return {
                 ok: true,
                 text: async () => `<feed>${fixture.feedIds.map(id => `<entry><yt:videoId>${id}</yt:videoId></entry>`).join('')}</feed>`,
@@ -53,9 +55,8 @@ test('first check silently baselines existing uploads but tracks unfinished stre
 
     // Existing uploads should not flood Discord when monitoring is enabled.
     assert.equal(fixture.messages.length, 0);
-    assert.deepEqual(fixture.state(), { seen: [uploadId], pending: [streamId] });
+    assert.deepEqual(fixture.state(), { initialized: true, seen: [uploadId], pending: [streamId] });
 });
-
 test('new uploads notify once and remain deduplicated after a checker restart', async () => {
     const fixture = setup({ seen: [], pending: [] });
     await fixture.check();
@@ -64,7 +65,7 @@ test('new uploads notify once and remain deduplicated after a checker restart', 
     assert.equal(fixture.messages.length, 1);
     assert.equal(fixture.messages[0].destination, 'discord-channel');
     assert.equal(fixture.messages[0].url, `https://www.youtube.com/watch?v=${uploadId}`);
-    assert.deepEqual(fixture.state(), { seen: [uploadId], pending: [] });
+    assert.deepEqual(fixture.state(), { initialized: true, seen: [uploadId], pending: [] });
 });
 
 test('a pending stream notifies after it ends even when it disappears from the feed', async () => {
@@ -102,7 +103,7 @@ test('failed Discord delivery remains pending and is retried on the next check',
     const fixture = setup({ seen: [], pending: [] });
     fixture.failSend = true;
     await assert.rejects(fixture.check(), /Discord unavailable/);
-    assert.deepEqual(fixture.state(), { seen: [], pending: [uploadId] });
+    assert.deepEqual(fixture.state(), { initialized: true, seen: [], pending: [uploadId] });
 
     fixture.failSend = false;
     await fixture.check();
@@ -114,7 +115,7 @@ test('failed YouTube requests leave stored progress unchanged and allow a later 
     const fixture = setup(initialState);
     fixture.failRequest = true;
     await assert.rejects(fixture.check(), /YouTube request failed \(503\)/);
-    assert.deepEqual(fixture.state(), initialState);
+    assert.deepEqual(fixture.state(), { initialized: true, ...initialState });
 
     fixture.failRequest = false;
     await fixture.check();
@@ -152,4 +153,55 @@ test('an overlapping check skips work while the previous request is in flight', 
 test('feed parsing extracts unique video IDs and rejects non-feed responses', () => {
     assert.deepEqual(parseVideoIds(`<feed><yt:videoId>${uploadId}</yt:videoId><yt:videoId>${uploadId}</yt:videoId></feed>`), [uploadId]);
     assert.throws(() => parseVideoIds('<html>Service unavailable</html>'), /Invalid YouTube feed/);
+});
+
+test('a static empty feed triggers API discovery and quietly repairs the legacy empty baseline', async () => {
+    const fixture = setup();
+    const apiPaths = [];
+    const logs = [];
+    let persisted = { seen: [], pending: [] };
+    const check = createUploadChecker({
+        ...fixture.options, log: message => logs.push(message),
+        db: {
+            getState: async () => structuredClone(persisted),
+            setState: async (_module, _key, value) => { persisted = structuredClone(value); },
+        },
+        fetchImpl: async url => {
+            const path = new URL(url).pathname;
+            // Reproduce the real HTTP-200 template that previously hid the failure.
+            if (path.includes('/xml/feeds/')) return { ok: true, text: async () => '<feed><title>YouTube video feed</title></feed>' };
+            apiPaths.push(path);
+            const items = path.endsWith('/channels')
+                ? [{ contentDetails: { relatedPlaylists: { uploads: 'uploads-playlist' } } }]
+                : path.endsWith('/playlistItems') ? [{ contentDetails: { videoId: uploadId } }] : [video(uploadId)];
+            return { ok: true, json: async () => ({ items }) };
+        },
+    });
+
+    await check();
+
+    assert.deepEqual(persisted.seen, [uploadId]);
+    assert.equal(persisted.initialized, true);
+    assert.equal(fixture.messages.length, 0);
+    assert.equal(apiPaths.length, 3);
+    assert.ok(logs.some(message => message.includes('apiRequests=3')));
+
+    // The uploads playlist is cached; announced/baselined videos need no metadata call.
+    apiPaths.length = 0;
+    await check();
+    assert.deepEqual(apiPaths, ['/youtube/v3/playlistItems']);
+});
+
+test('empty feed and empty uploads playlist fail visibly without saving a false baseline', async () => {
+    const fixture = setup();
+    const check = createUploadChecker({
+        ...fixture.options, log: () => {},
+        fetchImpl: async url => {
+            if (url.includes('/xml/feeds/')) return { ok: true, text: async () => '<feed></feed>' };
+            return { ok: true, json: async () => ({ items: url.includes('/channels?')
+                ? [{ contentDetails: { relatedPlaylists: { uploads: 'uploads-playlist' } } }] : [] }) };
+        },
+    });
+    await assert.rejects(check(), /discovery returned no videos/);
+    assert.equal(fixture.state(), null);
 });

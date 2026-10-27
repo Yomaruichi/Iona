@@ -25,7 +25,7 @@ async function main() {
         notifications.init(client);
 
         // Use an initialized, empty in-memory store to simulate a newly discovered upload.
-        const db = { getState: async () => ({ seen: [], pending: [] }), setState: async () => {} };
+        const db = { getState: async () => ({ initialized: true, seen: [], pending: [] }), setState: async () => {} };
         const check = createUploadChecker({
             apiKey: 'simulation-only', destination, channelId, db,
             notify: (channel, message) => notifications.notify(channel, {
