@@ -1,75 +1,72 @@
-require('dotenv').config();
 const { once } = require('node:events');
 const { Client, GatewayIntentBits } = require('discord.js');
 const notifications = require('../core/notify');
-const { createUploadChecker } = require('../modules/youtube/uploads');
+const { fetchLatestVideo } = require('../modules/youtube/latestVideo');
 const { createLogger, safeError } = require('../core/logger');
 const log = createLogger('youtube-simulation');
 
+async function sendLatestVideoTest({ apiKey, destination, channelId, fetchImpl = fetch, notify = notifications.notify }) {
+    const video = await fetchLatestVideo({ apiKey, channelId, fetchImpl });
+    if (!video) {
+        // WARN when the recent uploads contain no processed public upload or finished replay.
+        log.warn('delivery_skipped', { reason: 'no_available_video', nextAction: 'exit_without_message' });
+        return null;
+    }
+    await notify(destination, {
+        title: `[TEST] ${video.snippet.title}`.slice(0, 256),
+        body: `Manual notification test using the latest available ${video.liveStreamingDetails ? 'stream replay' : 'upload'}. This is not a new-upload alert.`,
+        url: `https://www.youtube.com/watch?v=${video.id}`,
+    });
+    // INFO only after notification delivery; IDs identify the video and Discord destination.
+    log.info('completed', { videoId: video.id, channelId: destination });
+    return video;
+}
+
 async function main() {
-    // INFO when simulation begins; only Discord delivery is real.
-    log.info('started', { mode: 'fake_youtube_real_discord' });
+    require('dotenv').config();
+    // INFO at test startup; YouTube requests and Discord delivery are real, with no state writes.
+    log.info('started', { mode: 'real_youtube_real_discord', databaseWrites: 0 });
     const destination = process.env.YOUTUBE_DISCORD_CHANNEL_ID;
-    if (!process.env.DISCORD_TOKEN || !destination) {
-        throw new Error('DISCORD_TOKEN and YOUTUBE_DISCORD_CHANNEL_ID are required');
+    const apiKey = process.env.YOUTUBE_API_KEY;
+    if (!process.env.DISCORD_TOKEN || !destination || !apiKey) {
+        const error = new Error('DISCORD_TOKEN, YOUTUBE_DISCORD_CHANNEL_ID and YOUTUBE_API_KEY are required');
+        error.code = 'MISSING_CONFIGURATION';
+        throw error;
     }
     const channelId = process.env.YOUTUBE_CHANNEL_ID || 'UCcHHkJ98eSfa5aj0mdTwwLQ';
-    const videoId = 'SIMULATED01';
     const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-    const loginTimeout = setTimeout(() => {
-        // ERROR after the login deadline; the temporary client is destroyed and the tool exits nonzero.
-        log.error('login_timeout', { timeoutMs: 30000, nextAction: 'exit_tool' });
-        client.destroy();
-        process.exitCode = 1;
-    }, 30000);
+    let timeout;
     try {
         const ready = once(client, 'clientReady');
-        // INFO before Discord login; credentials are excluded.
+        const deadline = new Promise((_resolve, reject) => {
+            timeout = setTimeout(() => {
+                const error = new Error('Discord login timed out');
+                error.code = 'LOGIN_TIMEOUT';
+                reject(error);
+            }, 30000);
+        });
+        // INFO before Discord login; the token is deliberately excluded.
         log.info('login_started');
-        await client.login(process.env.DISCORD_TOKEN);
-        await ready;
-        clearTimeout(loginTimeout);
-        // INFO once the simulation client has received the gateway ready event.
+        await Promise.race([Promise.all([client.login(process.env.DISCORD_TOKEN), ready]), deadline]);
+        clearTimeout(timeout);
+        // INFO after gateway readiness; live API discovery can now proceed.
         log.info('discord_ready');
         notifications.init(client);
-
-        // Use an initialized, empty in-memory store to simulate a newly discovered upload.
-        const db = { getState: async () => ({ initialized: true, seen: [], pending: [] }), setState: async () => {} };
-        const check = createUploadChecker({
-            apiKey: 'simulation-only', destination, channelId, db,
-            notify: (channel, message) => notifications.notify(channel, {
-                ...message,
-                body: 'This is a simulated upload notification. No new video was detected.',
-                url: `https://www.youtube.com/channel/${channelId}`,
-            }),
-            fetchImpl: async url => url.includes('/xml/feeds/') ? {
-                ok: true,
-                text: async () => `<feed><yt:videoId>${videoId}</yt:videoId></feed>`,
-            } : {
-                ok: true,
-                json: async () => ({ items: [{
-                    id: videoId,
-                    snippet: {
-                        channelId, title: '[TEST] Simulated YouTube upload',
-                        publishedAt: new Date().toISOString(), liveBroadcastContent: 'none',
-                    },
-                    status: { privacyStatus: 'public', uploadStatus: 'processed' },
-                }] }),
-            },
-        });
-        await check();
-        // INFO after the real notification succeeds; destination identifies where to verify the test embed.
-        log.info('completed', { channelId: destination });
+        await sendLatestVideoTest({ apiKey, destination, channelId });
     } finally {
-        clearTimeout(loginTimeout);
+        clearTimeout(timeout);
         client.destroy();
-        // INFO after disposing the temporary client; the main bot process is independent.
+        // INFO after disposing the one-off client; the main bot is unaffected.
         log.info('client_closed');
     }
 }
 
-main().catch(error => {
-    // ERROR for a failed simulation; classifications omit secrets and the tool exits nonzero.
-    log.error('failed', { ...safeError(error), nextAction: 'exit_tool' });
-    process.exitCode = 1;
-});
+if (require.main === module) {
+    main().catch(error => {
+        // ERROR on manual test failure; exit nonzero without raw credential-bearing errors.
+        log.error('failed', { ...safeError(error), nextAction: 'exit_tool' });
+        process.exitCode = 1;
+    });
+}
+
+module.exports = { sendLatestVideoTest };

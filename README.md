@@ -105,9 +105,9 @@ To verify real discovery and API access from Heroku's Run Console without sendin
 node src/tools/checkYoutube.js
 ```
 
-Unlike the simulation below, this diagnostic uses real YouTube requests and consumes their normal quota. An old empty `seen`/`pending` record without an initialization flag is quietly baselined on the next successful production check, preventing a flood of historical notifications.
+This diagnostic uses real YouTube requests and consumes their normal quota. An old empty `seen`/`pending` record without an initialization flag is quietly baselined on the next successful production check, preventing a flood of historical notifications.
 
-The simulation sends one clearly labeled test embed to the configured Discord destination. It uses the real Discord connection and notification sender with fake feed/API responses and in-memory state. It uses no YouTube quota and makes no MongoDB changes. It verifies notification delivery and upload handling, but does not verify the API key, real feed access, or scheduler.
+The manual test fetches real data from YouTube and sends one `[TEST]` embed linking to the latest available upload or completed stream replay among the channel's 50 most recent uploads. It uses the configured channel (Mint Fantome by default), skips live/upcoming or unavailable videos, and ranks replays by completion time and regular uploads by publication time. It makes three Data API requests on the normal path (three quota units) and sends nothing if no eligible video exists. It makes no MongoDB reads or writes, so it can be repeated without affecting normal notification tracking. It verifies API access and Discord delivery, but does not verify the hourly scheduler or feed endpoint.
 
 On Heroku, select **More → Run console** and run:
 
@@ -121,7 +121,7 @@ Alternatively, use the CLI:
 heroku run "node src/tools/simulateYoutube.js" --app YOUR_APP_NAME
 ```
 
-The one-off dyno uses the app's Config Vars and is billed separately for its runtime. The script requires `DISCORD_TOKEN` and `YOUTUBE_DISCORD_CHANNEL_ID`.
+The one-off dyno uses the app's Config Vars and is billed separately for its runtime. The script requires `DISCORD_TOKEN`, `YOUTUBE_DISCORD_CHANNEL_ID`, and `YOUTUBE_API_KEY`.
 
 ## Docker deployment
 
