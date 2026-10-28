@@ -8,7 +8,14 @@ function init(discordClient) {
     log.info('initialized');
 }
 
-async function notify(channelId, { title, body, url }) {
+function notificationPayload({ content, title, body, url }) {
+    if (typeof content === 'string') return { content, allowedMentions: { parse: [] } };
+    return {
+        embeds: [{ title, description: body, url, timestamp: new Date().toISOString() }],
+    };
+}
+
+async function notify(channelId, message) {
     try {
         if (!client) throw new Error('notify.init(client) not called yet');
         // INFO before destination lookup and delivery; no message body or link is logged.
@@ -16,14 +23,7 @@ async function notify(channelId, { title, body, url }) {
         const channel = await client.channels.fetch(channelId);
         if (!channel) throw new Error(`notify: channel ${channelId} not found`);
 
-        await channel.send({
-            embeds: [{
-                title,
-                description: body,
-                url,
-                timestamp: new Date().toISOString(),
-            }],
-        });
+        await channel.send(notificationPayload(message));
         // INFO only after Discord accepts the send operation.
         log.info('delivery_completed', { channelId });
     } catch (error) {

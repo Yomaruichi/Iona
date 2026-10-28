@@ -64,7 +64,7 @@ test('new uploads notify once and remain deduplicated after a checker restart', 
 
     assert.equal(fixture.messages.length, 1);
     assert.equal(fixture.messages[0].destination, 'discord-channel');
-    assert.equal(fixture.messages[0].url, `https://www.youtube.com/watch?v=${uploadId}`);
+    assert.equal(fixture.messages[0].content, `New video uploaded. [Mint video](https://www.youtube.com/watch?v=${uploadId})`);
     assert.deepEqual(fixture.state(), { initialized: true, seen: [uploadId], pending: [] });
 });
 
@@ -82,7 +82,7 @@ test('a pending stream notifies after it ends even when it disappears from the f
     assert.equal(fixture.messages.length, 0);
     fixture.videos[0].status.uploadStatus = 'processed';
     await fixture.check();
-    assert.equal(fixture.messages[0].body, 'Stream replay is available.');
+    assert.equal(fixture.messages[0].content, `Stream replay is available. [Mint video](https://www.youtube.com/watch?v=${streamId})`);
     assert.deepEqual(fixture.state().pending, []);
 });
 
@@ -129,7 +129,10 @@ test('multiple new videos are announced oldest first', async () => {
         snippet: { channelId, title: 'Earlier video', publishedAt: '2026-10-25T00:00:00Z' },
     })];
     await fixture.check();
-    assert.deepEqual(fixture.messages.map(message => message.title), ['Earlier video', 'Mint video']);
+    assert.deepEqual(fixture.messages.map(message => message.content), [
+        `New video uploaded. [Earlier video](https://www.youtube.com/watch?v=${streamId})`,
+        `New video uploaded. [Mint video](https://www.youtube.com/watch?v=${uploadId})`,
+    ]);
 });
 
 test('an overlapping check skips work while the previous request is in flight', async () => {

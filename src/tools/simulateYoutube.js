@@ -5,6 +5,7 @@ const { fetchLatestVideo } = require('../modules/youtube/latestVideo');
 const { createLogger, safeError } = require('../core/logger');
 const log = createLogger('youtube-simulation');
 const { selectChannel } = require('../modules/youtube/config');
+const { uploadNotification } = require('../modules/youtube/notification');
 
 function readConfiguration(env, requestedChannel) {
     const required = ['DISCORD_TOKEN', 'YOUTUBE_DISCORD_CHANNEL_ID', 'YOUTUBE_API_KEY'];
@@ -29,11 +30,7 @@ async function sendLatestVideoTest({ apiKey, destination, channelId, fetchImpl =
         log.warn('delivery_skipped', { reason: 'no_available_video', nextAction: 'exit_without_message' });
         return null;
     }
-    await notify(destination, {
-        title: `[TEST] ${video.snippet.title}`.slice(0, 256),
-        body: `Manual notification test using the latest available ${video.liveStreamingDetails ? 'stream replay' : 'upload'}. This is not a new-upload alert.`,
-        url: `https://www.youtube.com/watch?v=${video.id}`,
-    });
+    await notify(destination, uploadNotification(video, { test: true }));
     // INFO only after notification delivery; IDs identify the video and Discord destination.
     log.info('completed', { videoId: video.id, channelId: destination });
     return video;
