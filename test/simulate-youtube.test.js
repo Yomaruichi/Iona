@@ -61,8 +61,7 @@ test('manual test fetches real endpoint shapes and sends only the newest availab
     assert.equal(setup.requests[1].searchParams.get('maxResults'), '50');
     assert.equal(setup.sent.length, 1);
     assert.equal(setup.sent[0].destination, 'discord-channel');
-    assert.equal(setup.sent[0].url, 'https://www.youtube.com/watch?v=newer000001');
-    assert.match(setup.sent[0].title, /^\[TEST\]/);
+    assert.equal(setup.sent[0].content, '[TEST] New video uploaded. [Mint upload](https://www.youtube.com/watch?v=newer000001)');
 });
 
 test('manual test skips live streams and prefers the most recently finished replay', async () => {
@@ -76,8 +75,7 @@ test('manual test skips live streams and prefers the most recently finished repl
         }),
     ]);
     await sendLatestVideoTest(setup.options);
-    assert.equal(setup.sent[0].url, 'https://www.youtube.com/watch?v=replay00001');
-    assert.match(setup.sent[0].body, /stream replay/);
+    assert.equal(setup.sent[0].content, '[TEST] Stream replay is available. [Mint upload](https://www.youtube.com/watch?v=replay00001)');
 });
 
 test('manual test sends no dummy notification when there are no uploads', async () => {

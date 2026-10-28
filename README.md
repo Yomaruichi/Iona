@@ -9,7 +9,7 @@ Iona is a modular Discord bot and a foundation for future backend and cloud inte
 - Optional YouTube notifications for regular uploads and completed stream replays from multiple channels, with Mint Fantome as the default source.
 - Automatically loads slash commands and registers them globally with Discord when their definitions change. A hash stored in MongoDB avoids unnecessary registration.
 
-The code also contains shared infrastructure for module loading, Express webhook routes, cron jobs, embed notifications, and MongoDB module state. The YouTube module uses scheduled polling; module scope labels are informational and private/public access controls have not been implemented.
+The code also contains shared infrastructure for module loading, Express webhook routes, cron jobs, text/embed notifications, and MongoDB module state. The YouTube module uses scheduled polling; module scope labels are informational and private/public access controls have not been implemented.
 
 ## Stack and layout
 
@@ -49,6 +49,8 @@ npm start
 Startup connects to MongoDB before logging into Discord. Once ready, it loads modules, starts the webhook server, and registers changed global slash commands.
 
 ## YouTube upload notifications
+
+Notifications show the video title as a Markdown hyperlink beside the status, for example `Stream replay is available. [Stream title](https://www.youtube.com/watch?v=VIDEO_ID)`. No custom embed or preview-suppression flag is sent; preview rendering depends on Discord's behavior and settings. Regular uploads use `New video uploaded.` and manual tests add `[TEST]`. Formatting characters in titles are escaped to preserve the link.
 
 Enable YouTube Data API v3 in a Google Cloud project and create an API key restricted to that API. OAuth is not required for the public video metadata used by this integration. Add the following to `.env` locally, or to Heroku Config Vars when hosted:
 
@@ -123,7 +125,7 @@ node src/tools/simulateYoutube.js ANOTHER_YOUTUBE_CHANNEL_ID
 
 This diagnostic uses real YouTube requests and consumes their normal quota. An old empty `seen`/`pending` record without an initialization flag is quietly baselined on the next successful production check, preventing a flood of historical notifications.
 
-The manual test fetches real data from YouTube and sends one `[TEST]` embed linking to the latest available upload or completed stream replay among the channel's 50 most recent uploads. It uses the configured channel (Mint Fantome by default), skips live/upcoming or unavailable videos, and ranks replays by completion time and regular uploads by publication time. It makes three Data API requests on the normal path (three quota units) and sends nothing if no eligible video exists. It makes no MongoDB reads or writes, so it can be repeated without affecting normal notification tracking. It verifies API access and Discord delivery, but does not verify the hourly scheduler or feed endpoint.
+The manual test fetches real data from YouTube and sends one `[TEST]` text notification linking to the latest available upload or completed stream replay among the channel's 50 most recent uploads. It uses the configured channel (Mint Fantome by default), skips live/upcoming or unavailable videos, and ranks replays by completion time and regular uploads by publication time. It makes three Data API requests on the normal path (three quota units) and sends nothing if no eligible video exists. It makes no MongoDB reads or writes, so it can be repeated without affecting normal notification tracking. It verifies API access and Discord delivery, but does not verify the hourly scheduler or feed endpoint.
 
 On Heroku, select **More → Run console** and run:
 

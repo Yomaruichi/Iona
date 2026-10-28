@@ -1,6 +1,7 @@
 const { createLogger, safeError } = require('../../core/logger');
 const { YouTubeApi } = require('./api');
 const { isAvailable, belongsToChannel, availableAt, parseVideoIds } = require('./videos');
+const { uploadNotification } = require('./notification');
 
 function needsBaseline(saved) {
     if (!saved) return true;
@@ -69,11 +70,7 @@ class UploadChecker {
     async announce(state, available) {
         await this.save(state);
         for (const video of available) {
-            await this.notify(this.destination, {
-                title: video.snippet.title.slice(0, 256),
-                body: video.liveStreamingDetails ? 'Stream replay is available.' : 'New video uploaded.',
-                url: `https://www.youtube.com/watch?v=${video.id}`,
-            });
+            await this.notify(this.destination, uploadNotification(video));
             state.seen = [...state.seen, video.id].slice(-500);
             state.pending = state.pending.filter(id => id !== video.id);
             await this.save(state);

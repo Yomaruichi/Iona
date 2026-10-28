@@ -30,3 +30,16 @@ test('an unavailable notification channel rejects delivery so callers can retry'
     notifications.init({ channels: { fetch: async () => null } });
     await assert.rejects(notifications.notify('missing', { title: 'Upload' }), /channel missing not found/);
 });
+
+test('text notifications preserve a title hyperlink without custom embeds or preview suppression', async () => {
+    let sentMessage;
+    notifications.init({ channels: { fetch: async () => ({
+        send: async payload => { sentMessage = payload; },
+    }) } });
+    const content = 'Stream replay is available. [Mint stream title](https://www.youtube.com/watch?v=replay00001)';
+
+    await notifications.notify('channel', { content });
+
+    // Preserve the requested Markdown link in content without adding custom embeds or suppress flags.
+    assert.deepEqual(sentMessage, { content, allowedMentions: { parse: [] } });
+});
