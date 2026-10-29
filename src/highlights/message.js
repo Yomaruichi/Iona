@@ -14,10 +14,10 @@ function label(value, limit) {
 function highlightMessage(job) {
     const url = `https://www.youtube.com/watch?v=${encodeURIComponent(job.videoId)}`;
     const moments = job.progress.clips.slice(0, 3).map((clip, index) => {
-        const text = `${timestamp(clip.seconds)} — ${label(clip.description, 150)}`;
-        return `${index + 1}. [${text}](${url}&t=${Math.floor(clip.seconds)}s)\nSuggested cut: ${timestamp(clip.start)}–${timestamp(clip.end)}`;
+        const link = `[${timestamp(clip.seconds)}](${url}&t=${Math.floor(clip.seconds)}s)`;
+        return `${index + 1}. ${link} — ${label(clip.description, 150)}\nSuggested cut: ${timestamp(clip.start)}–${timestamp(clip.end)}`;
     });
-    return { content: `Replay highlights for manual download\n[${label(job.title, 100)}](${url})\n\n${moments.join('\n\n')}` };
+    return { content: `Replay highlights for manual download\n${label(job.title, 100)}\n\n${moments.join('\n\n')}` };
 }
 
 module.exports = { highlightMessage };
