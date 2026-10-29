@@ -15,7 +15,7 @@ function candidateIds(state, discovered) {
 }
 
 class UploadChecker {
-    constructor({ apiKey, destination, channelId, db, notify, fetchImpl, log }) {
+    constructor({ apiKey, destination, channelId, db, notify, fetchImpl, log, enqueueReplay }) {
         this.destination = destination;
         this.channelId = channelId;
         this.db = db;
@@ -24,6 +24,7 @@ class UploadChecker {
         this.log = createLogger('youtube', { sink: log });
         this.api = new YouTubeApi({ apiKey, fetchImpl, logger: this.log });
         this.running = false;
+        this.enqueueReplay = enqueueReplay;
     }
 
     async discover(feed, state) {
@@ -70,10 +71,21 @@ class UploadChecker {
     async announce(state, available) {
         await this.save(state);
         for (const video of available) {
+            await this.queueReplay(video);
             await this.notify(this.destination, uploadNotification(video));
             state.seen = [...state.seen, video.id].slice(-500);
             state.pending = state.pending.filter(id => id !== video.id);
             await this.save(state);
+        }
+    }
+
+    async queueReplay(video) {
+        if (!this.enqueueReplay) return;
+        try {
+            await this.enqueueReplay(video, this.destination);
+        } catch (error) {
+            // ERROR for optional clipping enqueue failure; regular YouTube notifications remain operational.
+            this.log.error('highlight_enqueue_failed', { videoId: video.id, ...safeError(error), nextAction: 'inspect_queue' });
         }
     }
 

@@ -57,6 +57,20 @@ test('first check silently baselines existing uploads but tracks unfinished stre
     assert.equal(fixture.messages.length, 0);
     assert.deepEqual(fixture.state(), { initialized: true, seen: [uploadId], pending: [streamId] });
 });
+
+test('highlight hooks exclude baseline history and cannot prevent normal upload notifications on failure', async () => {
+    const fixture = setup();
+    let enqueued = 0;
+    fixture.options.enqueueReplay = async () => { enqueued++; throw new Error('queue unavailable'); };
+    await createUploadChecker(fixture.options)();
+    assert.equal(enqueued, 0);
+    // Simulate a newly available replay after the initial baseline has been saved.
+    fixture.feedIds.push(streamId);
+    fixture.videos.push(video(streamId, { liveStreamingDetails: { actualEndTime: '2026-10-30T00:00:00Z' } }));
+    await createUploadChecker(fixture.options)();
+    assert.equal(enqueued, 1);
+    assert.equal(fixture.messages.length, 1);
+});
 test('new uploads notify once and remain deduplicated after a checker restart', async () => {
     const fixture = setup({ seen: [], pending: [] });
     await fixture.check();

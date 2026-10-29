@@ -29,6 +29,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Install FFmpeg for local media fixture tests
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm test
 
   docker:
@@ -44,6 +46,10 @@ jobs:
           docker compose config --quiet
       - name: Build production image
         run: docker build --tag iona:ci .
+      - name: Build separate highlight worker image
+        run: docker build --file Dockerfile.highlights --tag iona-highlights:ci .
+      - name: Verify highlight worker stays disabled without configuration
+        run: docker run --rm iona-highlights:ci
       - name: Check production dependencies and command loading
         run: >-
           docker run --rm iona:ci node -e
