@@ -19,6 +19,8 @@ test('OpenRouter selection requests JSON and returns supplied IDs from a valid r
     // Keep a bounded output budget while explicitly requesting machine-readable JSON.
     const sent = JSON.parse(request.mock.calls[0].arguments[1].body);
     assert.deepEqual(sent.response_format, { type: 'json_object' });
+    // Ranking supplied descriptions should not spend the answer budget on optional reasoning.
+    assert.deepEqual(sent.reasoning, { enabled: false });
     assert.equal(sent.max_tokens, 1000);
     assert.equal(sent.model, 'openrouter/free');
 });
