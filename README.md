@@ -187,6 +187,8 @@ After the tests pass, CI validates Compose configuration, builds the production 
 
 ## Future plans
 
+An optional [Mint replay highlights prototype](docs/highlights.md) is implemented behind `HIGHLIGHTS_ENABLED`. It uses a separate Railway cron worker, OpenRouter selection, FFmpeg section extraction, and private Google Drive uploads. Automatic processing requires a successful real Railway benchmark and explicit activation; deployment and free-tier viability have not been verified.
+
 - Additional integrations such as GitHub notifications, Docker/Obsidian statistics, Moodle events, and X notifications.
 - Private and public feature access controls so personal integrations can coexist with features available to other servers.
 - A shared Cloudflare Worker webhook receiver, decoupled from the bot, that can serve multiple bots.
