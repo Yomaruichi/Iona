@@ -2,9 +2,7 @@ require('dotenv').config();
 const { readFile } = require('node:fs/promises');
 const db = require('../core/db');
 const store = require('./store');
-const media = require('./media');
 const { services } = require('./services');
-const { createDrive } = require('./drive');
 const { processJob } = require('./processor');
 const { YouTubeApi } = require('../modules/youtube/api');
 const { isAvailable } = require('../modules/youtube/videos');
@@ -12,8 +10,7 @@ const { createLogger, safeError } = require('../core/logger');
 const log = createLogger('highlights-runner');
 
 function configuration(env) {
-    const required = ['MONGO_DB', 'YOUTUBE_API_KEY', 'OPENROUTER_API_KEY', 'OPENROUTER_MODEL',
-        'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN', 'GOOGLE_DRIVE_FOLDER_ID'];
+    const required = ['MONGO_DB', 'YOUTUBE_API_KEY', 'OPENROUTER_API_KEY', 'OPENROUTER_MODEL'];
     if (required.some(key => !env[key])) {
         const error = new Error('Missing highlight worker configuration');
         error.code = 'MISSING_CONFIGURATION';
@@ -56,6 +53,7 @@ async function main(env = process.env, benchmarkId = process.argv[2]) {
     await db.connect();
     await store.Job.init();
     if (benchmarkId) await enqueueBenchmark(benchmarkId, env);
+    await store.recoverSelections(Boolean(benchmarkId), benchmarkId);
     const job = await store.claim(Boolean(benchmarkId), benchmarkId);
     if (!job) {
         // INFO when no due work exists; exit rather than idle on Railway.
@@ -78,8 +76,7 @@ async function runJob(job, env) {
     const heartbeat = setInterval(() => store.renew(job).catch(error => controller.abort(error)), 30000);
     const started = Date.now();
     try {
-        const upload = await createDrive(env, controller.signal);
-        await processJob(job, { store, api: services(env, controller.signal), media, upload, signal: controller.signal });
+        await processJob(job, { store, api: services(env, controller.signal) });
     } finally {
         clearTimeout(deadline);
         clearInterval(heartbeat);

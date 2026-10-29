@@ -2,6 +2,15 @@ const { YouTubeApi } = require('../modules/youtube/api');
 const { createLogger } = require('../core/logger');
 const log = createLogger('highlights-api');
 
+function durationSeconds(value) {
+    const match = /^P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(value);
+    if (!match) throw new Error('Replay duration unavailable');
+    const [, days = 0, hours = 0, minutes = 0, seconds = 0] = match;
+    const duration = +days * 86400 + +hours * 3600 + +minutes * 60 + +seconds;
+    if (duration <= 0) throw new Error('Replay duration unavailable');
+    return duration;
+}
+
 function selectionError(code) {
     const error = new Error('OpenRouter returned an unusable highlight selection');
     error.code = code;
@@ -44,6 +53,13 @@ async function jsonRequest(url, options, signal) {
 function services(env, signal) {
     const youtube = new YouTubeApi({ apiKey: env.YOUTUBE_API_KEY });
     return {
+        async duration(videoId) {
+            const videos = await youtube.list('videos', { part: 'contentDetails', id: videoId });
+            const duration = durationSeconds(videos[0]?.contentDetails?.duration);
+            // INFO after API duration validation; seconds bounds manual cut suggestions without accessing video streams.
+            log.info('duration_received', { videoId, seconds: duration });
+            return duration;
+        },
         async comments(videoId) {
             const items = await youtube.list('commentThreads', { part: 'snippet', videoId, maxResults: '100', order: 'relevance', textFormat: 'plainText' });
             // INFO after a single bounded comment request; no pagination or replies are requested.

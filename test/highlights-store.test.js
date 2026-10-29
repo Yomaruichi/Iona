@@ -48,3 +48,64 @@ test('concurrent replay insertion tolerates duplicate keys but propagates databa
     t.mock.method(store.Job, 'updateOne', async () => { throw outage; });
     await assert.rejects(store.enqueue(replay, 'destination'), error => error === outage);
 });
+
+test('saved selections from exhausted media jobs become deliverable without reclaiming an active lease', async t => {
+    let query;
+    let update;
+    t.mock.method(store.Job, 'updateMany', async (filter, change) => {
+        query = filter;
+        update = change;
+        return { modifiedCount: 1 };
+    });
+
+    await store.recoverSelections(true, 'orJ2xodaKdI');
+
+    // Recovery requires a saved selection and expired ownership, even after all download attempts failed.
+    assert.equal(query.videoId, 'orJ2xodaKdI');
+    assert.equal(query.benchmark, true);
+    assert.deepEqual(query['progress.clips.0'], { $exists: true });
+    assert.ok(query.status.$in.includes('failed'));
+    assert.ok(!query.status.$in.includes('completed'));
+    assert.ok(query.$or[1].leaseUntil.$lte instanceof Date);
+    assert.equal(update.$set.status, 'completed');
+    assert.equal(update.$set['progress.delivery'], 'youtube_links');
+    assert.equal(update.$set.progress, undefined);
+});
+
+test('completed timestamp suggestions are delivered to their recorded Discord destination and marked sent', async t => {
+    const job = { _id: 'job', videoId: 'orJ2xodaKdI', destination: 'destination', title: 'Replay',
+        progress: { clips: [{ seconds: 2776, start: 2746, end: 2866, description: 'Funny reaction' }] } };
+    let claimed = false;
+    let marked = false;
+    let sends = 0;
+    t.mock.method(store.Job, 'findOneAndUpdate', () => ({ lean: async () => {
+        if (claimed) return null;
+        claimed = true;
+        return job;
+    } }));
+    t.mock.method(store.Job, 'updateOne', async (_filter, change) => { marked = change.$set.notified; });
+    const notify = async (destination, message) => {
+        assert.equal(marked, false);
+        assert.equal(destination, 'destination');
+        assert.match(message.content, /t=2776s/);
+        sends++;
+    };
+
+    await store.deliverCompleted(notify);
+    await store.deliverCompleted(notify);
+
+    assert.equal(marked, true);
+    assert.equal(sends, 1);
+});
+
+test('failed Discord delivery leaves the completion unmarked for a later delivery retry', async t => {
+    const job = { videoId: 'orJ2xodaKdI', title: 'Replay', progress: { clips: [
+        { seconds: 60, start: 30, end: 150, description: 'Moment' },
+    ] } };
+    t.mock.method(store.Job, 'findOneAndUpdate', () => ({ lean: async () => job }));
+    const save = t.mock.method(store.Job, 'updateOne', async () => {});
+
+    await assert.rejects(store.deliverCompleted(async () => { throw new Error('Discord unavailable'); }), /Discord unavailable/);
+
+    assert.equal(save.mock.calls.length, 0);
+});

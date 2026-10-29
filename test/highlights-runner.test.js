@@ -3,12 +3,11 @@ const assert = require('node:assert/strict');
 const db = require('../src/core/db');
 const store = require('../src/highlights/store');
 const { YouTubeApi } = require('../src/modules/youtube/api');
-const { main } = require('../src/highlights/runner');
+const { main, configuration } = require('../src/highlights/runner');
 
 const configured = {
     MONGO_DB: 'test-database', YOUTUBE_API_KEY: 'test-youtube', OPENROUTER_API_KEY: 'test-openrouter',
-    OPENROUTER_MODEL: 'test-model', GOOGLE_CLIENT_ID: 'test-client', GOOGLE_CLIENT_SECRET: 'test-secret',
-    GOOGLE_REFRESH_TOKEN: 'test-refresh', GOOGLE_DRIVE_FOLDER_ID: 'test-folder', YOUTUBE_DISCORD_CHANNEL_ID: 'destination',
+    OPENROUTER_MODEL: 'test-model', YOUTUBE_DISCORD_CHANNEL_ID: 'destination',
 };
 
 function mockQueue(t) {
@@ -17,8 +16,13 @@ function mockQueue(t) {
     t.mock.method(store.Job, 'init', async () => {});
     t.mock.method(store, 'claim', async (...args) => { calls.claims.push(args); return null; });
     t.mock.method(store, 'enqueue', async (...args) => { calls.enqueued.push(args); });
+    t.mock.method(store, 'recoverSelections', async () => {});
     return calls;
 }
+
+test('timestamp-link worker configuration does not require Google OAuth or Drive credentials', () => {
+    assert.doesNotThrow(() => configuration(configured));
+});
 
 test('disabled worker exits without opening the database or making external requests', async t => {
     const calls = mockQueue(t);

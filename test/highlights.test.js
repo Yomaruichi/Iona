@@ -1,7 +1,5 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { access, writeFile } = require('node:fs/promises');
-const { join } = require('node:path');
 const { timestamps, clipWindow, validateSelection } = require('../src/highlights/timestamps');
 const { processJob } = require('../src/highlights/processor');
 
@@ -46,7 +44,7 @@ test('selection validation rejects malformed, oversized, repeated and out-of-ran
 
 function fixture() {
     const job = { videoId: 'replay00001', attempts: 1, progress: {}, title: 'Replay' };
-    const calls = { comments: 0, ai: 0, uploads: 0, directories: [] };
+    const calls = { comments: 0, ai: 0, duration: 0 };
     const deps = {
         signal: new AbortController().signal,
         store: {
@@ -54,19 +52,13 @@ function fixture() {
             finish: async (_job, status) => { job.status = status; },
         },
         api: {
+            duration: async () => { calls.duration++; return 1000; },
             comments: async () => { calls.comments++; return [{ text: '1:00 Funny story\n5:00 Reaction' }]; },
             select: async () => { calls.ai++; return ['t0', 't1']; },
         },
-        media: {
-            duration: async () => 1000,
-            extract: async (_job, _clip, directory) => {
-                calls.directories.push(directory);
-                const path = join(directory, 'clip.mp4');
-                await writeFile(path, 'fixture');
-                return path;
-            },
-        },
-        upload: async () => { calls.uploads++; return `file-${calls.uploads}`; },
+        // These retired operations must never run in the manual-download workflow.
+        media: { extract: () => assert.fail('No video extraction expected') },
+        upload: () => assert.fail('No Drive upload expected'),
     };
     return { job, calls, deps };
 }
@@ -77,26 +69,42 @@ test('no timestamp match is terminal and never invokes AI or media processing', 
     await processJob(job, deps);
     assert.equal(job.status, 'skipped_no_timestamps');
     assert.equal(calls.ai, 0);
-    assert.equal(calls.uploads, 0);
+    assert.equal(calls.duration, 0);
 });
 
-test('upload retries reuse saved comments, AI decisions and uploaded file IDs, cleaning temporary files', async () => {
+test('highlight selection stores up to three timestamp windows and completes without downloading files', async () => {
     const { job, calls, deps } = fixture();
-    const upload = deps.upload;
-    deps.upload = async (...args) => {
-        if (calls.uploads === 1) { calls.uploads++; throw new Error('upload failed'); }
-        return upload(...args);
-    };
-    await assert.rejects(processJob(job, deps), /upload failed/);
-    assert.equal(job.status, 'queued');
-    assert.equal(job.progress.clips[0].fileId, 'file-1');
-    job.attempts++;
-    deps.upload = upload;
     await processJob(job, deps);
     assert.equal(job.status, 'completed');
+    assert.equal(job.progress.delivery, 'youtube_links');
+    assert.deepEqual(job.progress.clips.map(clip => [clip.start, clip.end]), [[30, 150], [270, 390]]);
     assert.equal(calls.comments, 1);
     assert.equal(calls.ai, 1);
-    for (const directory of calls.directories) await assert.rejects(access(directory));
+    assert.equal(calls.duration, 1);
+});
+
+test('saved selections from a blocked download complete without fetching comments, duration or AI again', async () => {
+    const { job, calls, deps } = fixture();
+    job.progress.clips = [{ id: 't0', seconds: 60, start: 30, end: 150, description: 'Funny story' }];
+    await processJob(job, deps);
+    assert.equal(job.status, 'completed');
+    assert.deepEqual(calls, { comments: 0, ai: 0, duration: 0 });
+});
+
+test('an AI retry reuses saved comments and API duration', async () => {
+    const { job, calls, deps } = fixture();
+    const select = deps.api.select;
+    deps.api.select = async () => { throw new Error('AI unavailable'); };
+    await assert.rejects(processJob(job, deps), /AI unavailable/);
+    assert.equal(job.status, 'queued');
+    job.attempts++;
+    deps.api.select = select;
+
+    await processJob(job, deps);
+
+    assert.equal(job.status, 'completed');
+    assert.equal(calls.comments, 1);
+    assert.equal(calls.duration, 1);
 });
 
 test('the third failed processing attempt is terminal and retains successful discovery', async () => {
@@ -108,9 +116,9 @@ test('the third failed processing attempt is terminal and retains successful dis
     assert.equal(job.progress.comments.length, 1);
 });
 
-test('benchmark execution processes only one selected clip', async () => {
-    const { job, calls, deps } = fixture();
+test('manual preview keeps all selected links because no expensive clipping occurs', async () => {
+    const { job, deps } = fixture();
     job.benchmark = true;
     await processJob(job, deps);
-    assert.equal(calls.uploads, 1);
+    assert.equal(job.progress.clips.length, 2);
 });

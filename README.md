@@ -187,7 +187,7 @@ After the tests pass, CI validates Compose configuration, builds the production 
 
 ## Future plans
 
-An optional [Mint replay highlights prototype](docs/highlights.md) is implemented behind `HIGHLIGHTS_ENABLED`. It uses a separate Railway cron worker, OpenRouter selection, FFmpeg section extraction, and private Google Drive uploads. Automatic processing requires a successful real Railway benchmark and explicit activation; deployment and free-tier viability have not been verified.
+An optional [Mint replay highlights workflow](docs/highlights.md) is implemented behind `HIGHLIGHTS_ENABLED`. A separate Railway cron worker scans timestamp comments and asks OpenRouter to select up to three moments. Iona posts timestamped YouTube links and suggested cut boundaries in Discord for manual downloading. The worker uses YouTube Data API metadata; video extraction and Google Drive uploads are no longer part of the active workflow. Automatic processing requires a reviewed preview and explicit activation; live delivery and hosting usage must be verified after deployment.
 
 - Additional integrations such as GitHub notifications, Docker/Obsidian statistics, Moodle events, and X notifications.
 - Private and public feature access controls so personal integrations can coexist with features available to other servers.
