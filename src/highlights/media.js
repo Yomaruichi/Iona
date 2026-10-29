@@ -2,6 +2,7 @@ const { spawn } = require('node:child_process');
 const { stat } = require('node:fs/promises');
 const { join } = require('node:path');
 const { createLogger } = require('../core/logger');
+const { mediaError, toolName } = require('./media-errors');
 const log = createLogger('highlights-media');
 
 function run(command, args, signal) {
@@ -15,17 +16,22 @@ function run(command, args, signal) {
         };
         signal.addEventListener('abort', stop, { once: true });
         let output = '';
+        let diagnostics = '';
         child.stdout.on('data', chunk => {
             output += chunk;
             if (output.length > 1048576) stop();
         });
-        child.stderr.resume(); // Downloader output may expose signed URLs; never forward it to logs.
+        child.stderr.on('data', chunk => {
+            // Keep a bounded tail for classification only; raw output can contain signed URLs and credentials.
+            diagnostics = (diagnostics + chunk.toString()).slice(-16384);
+        });
         child.on('error', reject);
         child.on('close', code => {
             signal.removeEventListener('abort', stop);
             if (code === 0) return resolve(output);
-            const error = new Error('Media tool failed');
-            error.code = `MEDIA_EXIT_${code}`;
+            const error = mediaError(code, diagnostics);
+            // ERROR after a failed tool exit; only allowlisted tool names, exit status and fixed classifications are exposed.
+            log.error('tool_failed', { tool: toolName(command), exitCode: code, errorCode: error.code, nextAction: 'inspect_media_failure' });
             reject(error);
         });
     });
