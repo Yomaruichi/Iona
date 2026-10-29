@@ -12,19 +12,24 @@ const Job = mongoose.model('HighlightJob', new mongoose.Schema({
     lastError: mongoose.Schema.Types.Mixed,
 }, { timestamps: true }));
 
+async function insertReplay(video, destination, benchmark, dueAt) {
+    try {
+        await Job.updateOne({ videoId: video.id }, { $setOnInsert: {
+            videoId: video.id, destination, title: video.snippet.title, benchmark,
+            dueAt,
+        } }, { upsert: true });
+    } catch (error) {
+        if (error.code !== 11000) throw error;
+    }
+}
+
 async function enqueue(video, destination, benchmark = false) {
     if (video.snippet?.channelId !== MINT) return;
     const end = Date.parse(video.liveStreamingDetails?.actualEndTime);
     if (!Number.isFinite(end)) return;
     await Job.init();
-    try {
-        await Job.updateOne({ videoId: video.id }, { $setOnInsert: {
-            videoId: video.id, destination, title: video.snippet.title, benchmark,
-            dueAt: new Date(benchmark ? Date.now() : end + 3600000),
-        } }, { upsert: true });
-    } catch (error) {
-        if (error.code !== 11000) throw error;
-    }
+    const dueAt = new Date(benchmark ? Date.now() : end + 3600000);
+    await insertReplay(video, destination, benchmark, dueAt);
     // INFO after idempotent insertion; videoId identifies the replay, benchmark identifies manual mode.
     log.info('enqueue_completed', { videoId: video.id, benchmark });
 }

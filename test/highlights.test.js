@@ -22,6 +22,28 @@ test('clip windows clamp at both replay boundaries and reject invented or overla
     assert.throws(() => clipWindow(200, 200), /outside/);
 });
 
+test('timestamp parsing keeps long minute notation while rejecting invalid hour components', () => {
+    // Minutes can exceed 59 only when no hours component is supplied.
+    const found = timestamps([{ text: '90:00 Long replay\n1:60:00 Invalid minutes\n1:00:60 Invalid seconds\n2:03:04 - Funny story' }]);
+    assert.deepEqual(found.map(entry => entry.seconds), [5400, 7384]);
+    assert.deepEqual(found.map(entry => entry.description), ['Long replay', 'Funny story']);
+});
+
+test('selection validation rejects malformed, oversized, repeated and out-of-range choices', () => {
+    const candidates = [{ id: 'first', seconds: 60 }, { id: 'second', seconds: 300 }, { id: 'outside', seconds: 1000 }];
+    for (const ids of [null, 'first', [], ['first', 'second', 'first', 'second']]) {
+        assert.throws(() => validateSelection(ids, candidates, 1000), /Invalid highlight selection/);
+    }
+    assert.throws(() => validateSelection(['first', 'first'], candidates, 1000), /Overlapping/);
+    assert.throws(() => validateSelection(['outside'], candidates, 1000), /outside/);
+    for (const duration of [NaN, Infinity, 0, -1]) assert.throws(() => clipWindow(10, duration), /duration/);
+    for (const seconds of [NaN, Infinity, -1, 1000]) assert.throws(() => clipWindow(seconds, 1000), /outside/);
+
+    // Checking chronological overlap must not reorder the AI's ranking.
+    const clips = validateSelection(['second', 'first'], candidates, 1000);
+    assert.deepEqual(clips.map(clip => clip.id), ['second', 'first']);
+});
+
 function fixture() {
     const job = { videoId: 'replay00001', attempts: 1, progress: {}, title: 'Replay' };
     const calls = { comments: 0, ai: 0, uploads: 0, directories: [] };

@@ -5,42 +5,55 @@ const { timestamps, validateSelection } = require('./timestamps');
 const { createLogger, safeError } = require('../core/logger');
 const log = createLogger('highlights');
 
-async function processJob(job, { store, api, media, upload, signal }) {
+async function loadCandidates(job, { api }, checkpoint) {
+    if (!job.progress.comments) {
+        job.progress.comments = await api.comments(job.videoId);
+        await checkpoint();
+    }
+    return timestamps(job.progress.comments);
+}
+
+async function prepareClips(job, candidates, { api, media, signal }, checkpoint) {
+    const progress = job.progress;
+    if (!progress.duration) {
+        progress.duration = await media.duration(job.videoId, signal);
+        await checkpoint();
+    }
+    if (progress.clips) return;
+    const ids = await api.select(job, candidates);
+    progress.clips = validateSelection(ids, candidates, progress.duration);
+    if (job.benchmark) progress.clips = progress.clips.slice(0, 1);
+    await checkpoint();
+}
+
+async function processClip(job, clip, { media, upload, signal }, checkpoint) {
+    if (clip.fileId) return;
+    signal.throwIfAborted();
+    const directory = await mkdtemp(join(tmpdir(), 'iona-highlight-'));
+    try {
+        const path = await media.extract(job, clip, directory, signal);
+        clip.fileId = await upload(job, clip, path);
+        await checkpoint();
+    } finally { await rm(directory, { recursive: true, force: true }); }
+}
+
+async function processJob(job, dependencies) {
+    const { store } = dependencies;
     const progress = job.progress;
     const checkpoint = () => store.save(job, { progress });
     // INFO on claimed job execution; attempts measures bounded recovery runs.
     log.info('job_started', { videoId: job.videoId, attempts: job.attempts });
     try {
-        if (!progress.comments) {
-            progress.comments = await api.comments(job.videoId);
-            await checkpoint();
-        }
-        const candidates = timestamps(progress.comments);
+        const candidates = await loadCandidates(job, dependencies, checkpoint);
         if (!candidates.length) {
             await store.finish(job, 'skipped_no_timestamps');
             // INFO for a terminal no-match result; no future automatic comment scans will occur.
             log.info('job_skipped', { videoId: job.videoId, reason: 'no_timestamps' });
             return;
         }
-        if (!progress.duration) {
-            progress.duration = await media.duration(job.videoId, signal);
-            await checkpoint();
-        }
-        if (!progress.clips) {
-            const ids = await api.select(job, candidates);
-            progress.clips = validateSelection(ids, candidates, progress.duration);
-            if (job.benchmark) progress.clips = progress.clips.slice(0, 1);
-            await checkpoint();
-        }
+        await prepareClips(job, candidates, dependencies, checkpoint);
         for (const clip of progress.clips) {
-            if (clip.fileId) continue;
-            signal.throwIfAborted();
-            const directory = await mkdtemp(join(tmpdir(), 'iona-highlight-'));
-            try {
-                const path = await media.extract(job, clip, directory, signal);
-                clip.fileId = await upload(job, clip, path);
-                await checkpoint();
-            } finally { await rm(directory, { recursive: true, force: true }); }
+            await processClip(job, clip, dependencies, checkpoint);
         }
         await store.finish(job, 'completed');
         // INFO after all clips and completion state persist; completed files survive future restarts.

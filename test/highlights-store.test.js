@@ -35,3 +35,16 @@ test('claiming work requires a due date and expired lease, while updates reject 
     t.mock.method(store.Job, 'updateOne', async () => ({ matchedCount: 0 }));
     await assert.rejects(store.save({ _id: 'job', lease: 'old-owner' }, { progress: {} }), /lease lost/);
 });
+
+test('concurrent replay insertion tolerates duplicate keys but propagates database failures', async t => {
+    t.mock.method(store.Job, 'init', async () => {});
+    const replay = { id: 'replay00001', snippet: { channelId: store.MINT, title: 'Replay' },
+        liveStreamingDetails: { actualEndTime: '2026-10-30T01:00:00Z' } };
+    t.mock.method(store.Job, 'updateOne', async () => { throw Object.assign(new Error('Duplicate'), { code: 11000 }); });
+    // Another worker may have created this exact replay between discovery and insertion.
+    await store.enqueue(replay, 'destination');
+
+    const outage = Object.assign(new Error('Database unavailable'), { code: 'ECONNRESET' });
+    t.mock.method(store.Job, 'updateOne', async () => { throw outage; });
+    await assert.rejects(store.enqueue(replay, 'destination'), error => error === outage);
+});
