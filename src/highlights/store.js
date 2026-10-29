@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { mongoose } = require('../core/db');
 const { createLogger } = require('../core/logger');
+const { highlightMessage } = require('./message');
 const log = createLogger('highlights-store');
 const MINT = 'UCcHHkJ98eSfa5aj0mdTwwLQ';
 const Job = mongoose.model('HighlightJob', new mongoose.Schema({
@@ -59,16 +60,26 @@ async function finish(job, status, lastError) {
     await save(job, { status, progress: job.progress, lastError, leaseUntil: new Date(0) });
 }
 
+async function recoverSelections(benchmark = false, videoId) {
+    const now = new Date();
+    const result = await Job.updateMany({
+        ...(videoId ? { videoId } : {}), benchmark,
+        status: { $in: ['queued', 'processing', 'failed'] }, 'progress.clips.0': { $exists: true },
+        $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: now } }],
+    }, { $set: { status: 'completed', 'progress.delivery': 'youtube_links', leaseUntil: new Date(0), lastError: null } });
+    // INFO after recovery; count describes saved selections made deliverable without another AI call or download.
+    log.info('saved_selections_recovered', { count: result.modifiedCount, benchmark });
+}
+
 async function deliverCompleted(notify) {
     const job = await Job.findOneAndUpdate({ status: 'completed', notified: false,
         $or: [{ notificationLeaseUntil: { $exists: false } }, { notificationLeaseUntil: { $lte: new Date() } }],
     }, { $set: { notificationLeaseUntil: new Date(Date.now() + 120000) } }, { new: true }).lean();
     if (!job) return;
-    const links = job.progress.clips.map(clip => `https://drive.google.com/file/d/${clip.fileId}/view`);
-    await notify(job.destination, { content: `Replay highlights are ready.\n${links.join('\n')}` });
+    await notify(job.destination, highlightMessage(job));
     await Job.updateOne({ _id: job._id }, { $set: { notified: true } });
-    // INFO after Discord accepts links and delivery state persists; files remain privately shared.
-    log.info('links_delivered', { videoId: job.videoId, clips: links.length });
+    // INFO after Discord accepts timestamp links and delivery state persists; count measures manual-download suggestions.
+    log.info('links_delivered', { videoId: job.videoId, highlights: job.progress.clips.length });
 }
 
-module.exports = { Job, enqueue, claim, save, renew, finish, deliverCompleted, MINT };
+module.exports = { Job, enqueue, claim, save, renew, finish, deliverCompleted, recoverSelections, MINT };

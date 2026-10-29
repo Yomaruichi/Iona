@@ -10,6 +10,21 @@ function mockSelection(t, body) {
     return t.mock.method(global, 'fetch', async () => new Response(JSON.stringify(body), { status: 200 }));
 }
 
+test('replay duration comes from the YouTube Data API without requesting a video stream', async t => {
+    const request = mockSelection(t, { items: [{ contentDetails: { duration: 'PT1H2M3S' } }] });
+    const api = services(env, new AbortController().signal);
+    assert.equal(await api.duration(job.videoId), 3723);
+    const url = new URL(request.mock.calls[0].arguments[0]);
+    assert.equal(url.hostname, 'www.googleapis.com');
+    assert.equal(url.searchParams.get('part'), 'contentDetails');
+});
+
+test('missing or zero replay duration fails instead of creating unbounded cut suggestions', async t => {
+    mockSelection(t, { items: [{ contentDetails: { duration: 'PT0S' } }] });
+    const api = services(env, new AbortController().signal);
+    await assert.rejects(api.duration(job.videoId), /duration unavailable/);
+});
+
 test('OpenRouter selection requests JSON and returns supplied IDs from a valid response', async t => {
     const request = mockSelection(t, { choices: [{ finish_reason: 'stop', message: { content: '{"ids":["t0"]}' } }] });
     const api = services(env, new AbortController().signal);
