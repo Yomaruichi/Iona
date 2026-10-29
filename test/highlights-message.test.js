@@ -9,11 +9,23 @@ test('Discord highlights include replay title, timestamp links and manual cut bo
     ] } };
     const message = highlightMessage(job);
     assert.match(message.content, /manual download/);
-    assert.ok(message.content.includes('[Mint \\[Replay\\]](https://www.youtube.com/watch?v=orJ2xodaKdI)'));
-    assert.ok(message.content.includes('[46:16 — Funny reaction](https://www.youtube.com/watch?v=orJ2xodaKdI&t=2776s)'));
+    // The title is plain text; only the numeric timestamp belongs inside each hyperlink.
+    assert.equal(message.content.split('\n')[1], 'Mint \\[Replay\\]');
+    assert.ok(message.content.includes('[46:16](https://www.youtube.com/watch?v=orJ2xodaKdI&t=2776s) — Funny reaction'));
     assert.match(message.content, /Suggested cut: 45:46–47:46/);
-    assert.match(message.content, /1:06:40 — Another moment/);
+    assert.ok(message.content.includes('[1:06:40](https://www.youtube.com/watch?v=orJ2xodaKdI&t=4000s) — Another moment'));
     assert.ok(!message.content.includes('drive.google.com'));
+});
+
+test('emojis and brackets in creator text stay outside timestamp hyperlinks', () => {
+    const job = { videoId: 'orJ2xodaKdI', title: '【MINECRAFT】 🧑‍🚀 [Mint]', progress: { clips: [
+        { seconds: 2776, start: 2746, end: 2866, description: '👻 [Spooky] reaction (wow!)' },
+    ] } };
+    const message = highlightMessage(job);
+
+    // User text cannot close a link label because it is placed after the completed numeric link.
+    assert.equal(message.content.split('\n')[1], '【MINECRAFT】 🧑‍🚀 \\[Mint\\]');
+    assert.ok(message.content.includes('[46:16](https://www.youtube.com/watch?v=orJ2xodaKdI&t=2776s) — 👻 \\[Spooky\\] reaction \\(wow!\\)'));
 });
 
 test('long untrusted titles and descriptions stay within Discord message limits', () => {
