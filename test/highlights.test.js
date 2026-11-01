@@ -20,6 +20,16 @@ test('clip windows clamp at both replay boundaries and reject invented or overla
     assert.throws(() => clipWindow(200, 200), /outside/);
 });
 
+test('selection validation reports distinct safe failure codes', () => {
+    const candidates = [{ id: 'a', seconds: 60 }, { id: 'b', seconds: 70 }];
+    // A successful model response can still contain choices that fail domain validation.
+    assert.throws(() => validateSelection(['a', 'b'], candidates, 500), { code: 'HIGHLIGHT_OVERLAP' });
+    assert.throws(() => validateSelection(['invented'], candidates, 500), { code: 'HIGHLIGHT_UNKNOWN_ID' });
+    assert.throws(() => validateSelection([], candidates, 500), { code: 'HIGHLIGHT_INVALID_SELECTION' });
+    assert.throws(() => clipWindow(500, 500), { code: 'HIGHLIGHT_OUTSIDE_REPLAY' });
+    assert.throws(() => clipWindow(60, 0), { code: 'HIGHLIGHT_INVALID_DURATION' });
+});
+
 test('timestamp parsing keeps long minute notation while rejecting invalid hour components', () => {
     // Minutes can exceed 59 only when no hours component is supplied.
     const found = timestamps([{ text: '90:00 Long replay\n1:60:00 Invalid minutes\n1:00:60 Invalid seconds\n2:03:04 - Funny story' }]);

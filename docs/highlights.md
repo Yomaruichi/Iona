@@ -54,3 +54,7 @@ If no selection was saved and attempts were exhausted, investigate the API/model
 ## Verification boundaries
 
 CI mocks YouTube, OpenRouter, MongoDB and Discord. Tests cover timestamp selection, API duration, bounded message formatting, recovery, duplicate prevention and delivery retries. Existing media/Drive helper tests are retained, including a generated local FFmpeg fixture, but those tools are not included in the active highlights image. Live Discord delivery, Railway runtime and provider availability require a deployed preview.
+
+## Future hosting plan
+
+Keep the Railway selection worker for now. A later change can move due-job processing into Iona's existing Heroku scheduler because the active workflow only reads metadata/comments, ranks timestamps and sends links. That migration is planned, not implemented. Retain MongoDB leases and saved progress, verify processing on Heroku, and then stop the Railway service. The existing Heroku code currently enqueues replays and delivers completed suggestions; Railway still performs selection.
