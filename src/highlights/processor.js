@@ -20,6 +20,8 @@ async function prepareClips(job, candidates, { api }, checkpoint) {
     const ids = await api.select(job, candidates);
     progress.clips = validateSelection(ids, candidates, progress.duration);
     await checkpoint();
+    // INFO after validation and persistence both succeed; count identifies the saved, deliverable selections.
+    log.info('selection_saved', { videoId: job.videoId, count: progress.clips.length });
 }
 
 async function processJob(job, dependencies) {
