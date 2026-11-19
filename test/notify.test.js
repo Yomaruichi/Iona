@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const notifications = require('../src/core/notify');
+const { highlightMessage } = require('../src/highlights/message');
 
 test('notifications reject calls before initialization and send the supplied embed after initialization', async () => {
     // Sending before a Discord client is available should explain the missing setup.
@@ -24,6 +25,25 @@ test('notifications reject calls before initialization and send the supplied emb
     assert.equal(deliveredEmbed.description, 'Passed');
     assert.equal(deliveredEmbed.url, 'https://example.com');
     assert.ok(Number.isFinite(Date.parse(deliveredEmbed.timestamp)));
+});
+
+test('three highlights are sent in one embed without message links generating YouTube previews', async () => {
+    let payload;
+
+    notifications.init({ channels: { fetch: async () => ({ send: async message => { payload = message; } }) } });
+
+    const job = { videoId: 'orJ2xodaKdI', title: 'Replay 👻', progress: { clips:
+        [60, 300, 600].map(seconds => ({ seconds, start: seconds - 30, end: seconds + 90, description: 'Moment' })),
+    } };
+
+    // Exercise the formatter and actual notification adapter together without sending to Discord.
+    await notifications.notify('channel', highlightMessage(job));
+
+    assert.equal(payload.embeds.length, 1);
+    assert.equal(payload.content, undefined);
+    assert.equal(payload.embeds[0].title, 'Replay 👻');
+    assert.equal(payload.embeds[0].url, undefined);
+    assert.equal((payload.embeds[0].description.match(/Suggested cut:/g) || []).length, 3);
 });
 
 test('an unavailable notification channel rejects delivery so callers can retry', async () => {

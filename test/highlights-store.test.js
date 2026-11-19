@@ -87,7 +87,7 @@ test('completed timestamp suggestions are delivered to their recorded Discord de
     const notify = async (destination, message) => {
         assert.equal(marked, false);
         assert.equal(destination, 'destination');
-        assert.match(message.content, /t=2776s/);
+        assert.match(message.body, /t=2776s/);
         sends++;
     };
 

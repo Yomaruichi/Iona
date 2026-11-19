@@ -17,7 +17,10 @@ function highlightMessage(job) {
         const link = `[${timestamp(clip.seconds)}](${url}&t=${Math.floor(clip.seconds)}s)`;
         return `${index + 1}. ${link} — ${label(clip.description, 150)}\nSuggested cut: ${timestamp(clip.start)}–${timestamp(clip.end)}`;
     });
-    return { content: `Replay highlights for manual download\n${label(job.title, 100)}\n\n${moments.join('\n\n')}` };
+    return {
+        title: String(job.title).replace(/\s+/g, ' ').slice(0, 100),
+        body: `Replay highlights for manual download\n\n${moments.join('\n\n')}`,
+    };
 }
 
 module.exports = { highlightMessage };
