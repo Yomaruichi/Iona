@@ -187,7 +187,7 @@ After the tests pass, CI validates Compose configuration, builds the production 
 
 ## Future plans
 
-An optional [Mint replay highlights workflow](docs/highlights.md) is implemented behind `HIGHLIGHTS_ENABLED`. A separate Railway cron worker scans timestamp comments and asks OpenRouter to select up to three moments. Iona posts timestamped YouTube links and suggested cut boundaries in Discord for manual downloading. The worker uses YouTube Data API metadata; video extraction and Google Drive uploads are no longer part of the active workflow. Automatic processing requires a reviewed preview and explicit activation; live delivery and hosting usage must be verified after deployment.
+The optional [Mint replay highlights workflow](docs/highlights.md) runs inside Iona's existing Heroku worker when `HIGHLIGHTS_ENABLED=true`. Every 15 minutes it processes one due replay, scans timestamp comments and asks OpenRouter to select up to three moments. A separate five-minute job posts timestamp links and suggested cut boundaries in Discord for manual downloading. Set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` alongside the existing MongoDB and YouTube settings. No separate Railway service, additional dyno, benchmark flag, video download tools or Google Drive credentials are required. See the guide for migration and verification steps.
 
 - Additional integrations such as GitHub notifications, Docker/Obsidian statistics, Moodle events, and X notifications.
 - Private and public feature access controls so personal integrations can coexist with features available to other servers.

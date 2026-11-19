@@ -51,12 +51,20 @@ async function main(env = process.env, benchmarkId = process.argv[2]) {
     if (!processingAllowed(env, benchmarkId)) return;
     configuration(env);
     await db.connect();
+
+    await processDue(env, benchmarkId);
+}
+
+// Embedded execution uses Iona's existing connection; only the CLI owns connect/disconnect.
+async function processDue(env, benchmarkId) {
+    configuration(env);
+
     await store.Job.init();
     if (benchmarkId) await enqueueBenchmark(benchmarkId, env);
     await store.recoverSelections(Boolean(benchmarkId), benchmarkId);
     const job = await store.claim(Boolean(benchmarkId), benchmarkId);
     if (!job) {
-        // INFO when no due work exists; exit rather than idle on Railway.
+        // INFO when no due work exists; return control to the scheduler or one-off CLI.
         log.info('no_due_jobs');
         return;
     }
@@ -65,9 +73,9 @@ async function main(env = process.env, benchmarkId = process.argv[2]) {
 
 async function reportMetrics(job, started) {
     const memory = await readFile('/sys/fs/cgroup/memory.peak', 'utf8').catch(() => 'unavailable');
-    // INFO after processing; cgroup peak includes subprocesses, usageCost requires Railway billing review.
+    // INFO after processing; cgroup peak and process RSS measure the host, including Iona when embedded.
     log.info('run_metrics', { videoId: job.videoId, benchmark: job.benchmark, elapsedMs: Date.now() - started,
-        peakMemoryBytes: memory.trim(), nodePeakRssKB: process.resourceUsage().maxRSS, usageCost: 'review_railway_dashboard' });
+        peakMemoryBytes: memory.trim(), nodePeakRssKB: process.resourceUsage().maxRSS, usageCost: 'review_hosting_dashboard' });
 }
 
 async function runJob(job, env) {
@@ -90,4 +98,4 @@ if (require.main === module) main().catch(error => {
     process.exitCode = 1;
 }).finally(() => db.mongoose.disconnect());
 
-module.exports = { configuration, main };
+module.exports = { configuration, main, processDue };

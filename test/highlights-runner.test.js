@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const db = require('../src/core/db');
 const store = require('../src/highlights/store');
 const { YouTubeApi } = require('../src/modules/youtube/api');
-const { main, configuration } = require('../src/highlights/runner');
+const { main, configuration, processDue } = require('../src/highlights/runner');
 
 const configured = {
     MONGO_DB: 'test-database', YOUTUBE_API_KEY: 'test-youtube', OPENROUTER_API_KEY: 'test-openrouter',
@@ -19,6 +19,73 @@ function mockQueue(t) {
     t.mock.method(store, 'recoverSelections', async () => {});
     return calls;
 }
+
+test('embedded processing reuses Iona database connection without a benchmark gate or disconnect', async t => {
+    const calls = mockQueue(t);
+
+    const disconnect = t.mock.method(db.mongoose, 'disconnect', async () => assert.fail('Shared connection must remain open'));
+
+    await processDue(configured);
+
+    assert.equal(calls.connections, 0);
+
+    assert.deepEqual(calls.claims, [[false, undefined]]);
+
+    assert.equal(disconnect.mock.calls.length, 0);
+});
+
+test('embedded processing rejects missing OpenRouter settings before touching the shared queue', async t => {
+    const calls = mockQueue(t);
+
+    await assert.rejects(processDue({ ...configured, OPENROUTER_API_KEY: '' }), { code: 'MISSING_CONFIGURATION' });
+
+    assert.equal(calls.claims.length, 0);
+
+    assert.equal(calls.connections, 0);
+});
+
+test('embedded worker completes a queued replay through API selection without reconnecting the bot database', async t => {
+    const calls = mockQueue(t);
+
+    const job = { videoId: 'replay00001', title: 'Replay', attempts: 1, progress: {} };
+
+    const responses = [
+        { items: [{ snippet: { topLevelComment: { snippet: { textDisplay: '1:00 Funny story' } } } }] },
+        { items: [{ contentDetails: { duration: 'PT10M' } }] },
+        { choices: [{ finish_reason: 'stop', message: { content: '{"ids":["t0"]}' } }] },
+    ];
+
+    const writes = [];
+
+    t.mock.method(store, 'claim', async () => job);
+
+    t.mock.method(store, 'save', async () => { writes.push(structuredClone(job.progress)); });
+
+    t.mock.method(store, 'finish', async (_job, status) => { job.status = status; });
+
+    t.mock.method(db.mongoose, 'disconnect', async () => assert.fail('Cannot disconnect Iona'));
+
+    // Exercise the real processor and API adapters with external HTTP responses mocked.
+    t.mock.method(global, 'fetch', async () => {
+        assert.ok(responses.length, 'Unexpected external request');
+
+        return new Response(JSON.stringify(responses.shift()));
+    });
+
+    await processDue(configured);
+
+    assert.equal(job.status, 'completed');
+
+    assert.equal(job.progress.delivery, 'youtube_links');
+
+    assert.equal(job.progress.clips[0].seconds, 60);
+
+    assert.ok(writes.some(progress => progress.clips?.length === 1));
+
+    assert.equal(responses.length, 0);
+
+    assert.equal(calls.connections, 0);
+});
 
 test('timestamp-link worker configuration does not require Google OAuth or Drive credentials', () => {
     assert.doesNotThrow(() => configuration(configured));

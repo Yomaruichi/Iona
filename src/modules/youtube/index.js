@@ -10,8 +10,7 @@ const destination = process.env.YOUTUBE_DISCORD_CHANNEL_ID;
 const channelIds = readChannelIds(process.env);
 const highlightsEnabled = process.env.HIGHLIGHTS_ENABLED === 'true';
 const enqueueReplay = highlightsEnabled ? require('../../highlights/store').enqueue : undefined;
-const highlightJobs = highlightsEnabled ? [{ schedule: '*/5 * * * *', label: 'highlight-links',
-    task: () => require('../../highlights/store').deliverCompleted(notify) }] : [];
+const highlightJobs = require('../../highlights/scheduling').createHighlightJobs({ env: process.env, notify });
 
 // INFO at initialization; channelCount describes configured sources and booleans expose missing credentials safely.
 log.info(apiKey && destination ? 'monitoring_enabled' : 'monitoring_disabled', {

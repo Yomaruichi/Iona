@@ -1,60 +1,52 @@
-# Mint replay highlights
+# Mint replay highlights on Heroku
 
-Iona posts AI-selected replay moments as timestamped YouTube links in the existing Discord notification channel. People can review the moments and manually download or edit source material through a permitted workflow. The active worker does not download video or upload files to Google Drive.
+Iona handles replay discovery, comment scanning, AI selection and Discord delivery in its existing Heroku worker dyno. Messages contain timestamped YouTube links and suggested cut boundaries for manual downloading. The active workflow does not download videos or upload files to Google Drive.
 
-## Behavior
+## Requirements
 
-- Iona stays on Heroku. A separate Railway service runs every 15 minutes, processes at most one due job, and exits. Iona checks for completed suggestions every five minutes and sends them to the job's recorded Discord destination.
-- Only newly announced, completed Mint streams create automatic jobs. Regular uploads and initial quiet baselines are excluded. The source remains `UCcHHkJ98eSfa5aj0mdTwwLQ` even when Iona monitors other channels.
-- Each replay has a unique MongoDB `HighlightJob`. A scan becomes eligible one hour after the actual stream end, subject to Iona first detecting an available replay.
-- One relevance-ordered page of at most 100 top-level comments is stored. Replies are excluded. Timestamp-description pairs from all comments are combined and exact duplicates removed. No usable timestamps is a terminal result; API failures receive up to three attempts.
-- OpenRouter ranks the descriptions and replay metadata, selecting up to three supplied IDs. It does not watch the video. JSON responses are validated; invented IDs, invalid bounds and overlapping suggested windows are rejected.
-- Replay duration comes from YouTube Data API `videos.list` with `contentDetails`. No video-stream request, yt-dlp, FFmpeg, Google OAuth or Drive credentials are required by the worker.
-- Discord messages include the replay title, each selected description, a link to the actual moment, and suggested cut boundaries spanning 30 seconds before and 90 seconds after the moment, clamped to replay duration.
-- MongoDB stores comments, duration, selections and delivery progress. A renewable two-minute processing lease permits restart recovery. Discord delivery is marked only after a successful send; a crash between sending and saving can still duplicate a message.
-
-## Configuration
-
-Keep the feature disabled until a manual preview has been reviewed. Normal replay notifications remain independent.
-
-Railway variables:
+Configure these Heroku config vars on the same app that runs Iona:
 
 | Variable | Purpose |
 | --- | --- |
-| `MONGO_DB` | Same reachable database as Iona |
-| `YOUTUBE_API_KEY` | Public replay metadata and comments |
-| `YOUTUBE_DISCORD_CHANNEL_ID` | Destination recorded for manually supplied replays |
-| `OPENROUTER_API_KEY` | Model API credential |
-| `OPENROUTER_MODEL` | Explicit model or router ID; free endpoints remain subject to availability and rate limits |
-| `HIGHLIGHTS_ENABLED` | Enables automatic due-job processing when `true` |
-| `HIGHLIGHTS_BENCHMARK_PASSED` | Retained approval gate after reviewing the timestamp-link preview, resource use and cost |
+| `MONGO_DB` | Existing Iona database, including the existing `HighlightJob` collection |
+| `YOUTUBE_API_KEY` | YouTube Data API v3 public metadata and comments |
+| `YOUTUBE_DISCORD_CHANNEL_ID` | Existing notification destination |
+| `OPENROUTER_API_KEY` | OpenRouter credential; migrate it from the retired Railway service |
+| `OPENROUTER_MODEL` | Explicit model/router ID; free providers remain subject to availability and limits |
+| `HIGHLIGHTS_ENABLED` | Set to `true` to enable discovery, selection and delivery |
 
-Heroku requires `HIGHLIGHTS_ENABLED=true` to enqueue new replays and deliver completed timestamp suggestions. It uses Iona's existing Discord connection; no Discord token is required on Railway.
+Keep Iona's existing Discord and database configuration. No new npm dependency or extra Heroku dyno is needed. The existing Procfile remains `worker: node src/index.js`; do not replace the bot's start command with the highlights runner.
 
-Existing `GOOGLE_*` variables are unused by this workflow and may be removed from the highlights service. The older Drive/media helpers remain in the repository but are not loaded by the worker.
+`HIGHLIGHTS_BENCHMARK_PASSED` is not required by the embedded Heroku scheduler. Existing `GOOGLE_*` credentials are unused. The old standalone runner/image and media/Drive helpers remain for compatibility, but Heroku does not launch the standalone runner or load the download helpers.
 
-Configure Railway directly with Dockerfile path `Dockerfile.highlights` (or `RAILWAY_DOCKERFILE_PATH=Dockerfile.highlights`), start command `node src/highlights/runner.js`, cron `*/15 * * * *`, and restart policy `NEVER`. The image now needs only Node.js and production npm dependencies. The legacy `railway.highlights.json` is a reference for services already using config files; new services should use Railway's service settings. Keep the existing memory limit and review actual usage before changing hosting plans.
+## Processing and delivery
 
-## Manual preview and rollout
+- New completed Mint replays become eligible one hour after their actual end, subject to Iona discovering the available replay. Regular uploads and historical baseline videos are excluded. The fixed highlight source remains `UCcHHkJ98eSfa5aj0mdTwwLQ` even when notifications monitor other channels.
+- `youtube:highlight-processing` runs every 15 minutes and processes at most one due job. It uses Iona's existing MongoDB connection and never disconnects the bot's shared database. A local overlap guard prevents overlapping ticks, while MongoDB leases protect job ownership across processes and restarts.
+- Read one relevance-ordered page of up to 100 top-level comments. Replies are excluded. Combine timestamp-description pairs and remove exact duplicates. A terminal no-match result is not automatically scanned again.
+- Retrieve duration from YouTube Data API metadata. Ask OpenRouter to select up to three supplied IDs. Validate JSON, known IDs, replay bounds and non-overlapping suggested windows before saving. Provider/validation failures have a three-attempt limit. Saved comments, duration and choices are reused after restarts.
+- `youtube:highlight-links` runs every five minutes. It reads MongoDB and sends ready messages to Discord; this check does not call YouTube or OpenRouter. Selection failures are caught by Iona's scheduler, so normal replay notifications and ready-link delivery continue independently.
+- Highlight messages have a plain replay title and numeric timestamp hyperlinks. Descriptions and emojis stay outside links. Suggested cuts span 30 seconds before and 90 seconds after the moment, clamped to replay duration.
+- Delivery is marked only after Discord accepts the message. A crash between sending and saving delivery state can still duplicate a message.
 
-1. Deploy the updated code to both Heroku and Railway. Keep automatic Railway processing disabled initially.
-2. Enable `HIGHLIGHTS_ENABLED=true` on Heroku so Iona can deliver completed selections from MongoDB.
-3. Run `node src/highlights/runner.js VIDEO_ID` on Railway for a completed public Mint replay. For a stopped cron container, temporarily set this as the custom start command and deploy, then restore `node src/highlights/runner.js` after the preview. The video argument bypasses the delay and automatic approval gate; it still consumes API quota and potentially model credit for new selections.
-4. Check worker logs for completion and wait up to five minutes for Iona to post the timestamp links. Verify descriptions, link positions, cut boundaries, runtime, memory and Railway/OpenRouter usage. Mocked tests do not prove live delivery.
-5. After review, set `HIGHLIGHTS_ENABLED=true` and `HIGHLIGHTS_BENCHMARK_PASSED=true` on Railway for automatic selection. Existing baselines are not backfilled.
+## Migrate from Railway
 
-## Recovering selections from the earlier clipping prototype
+1. Copy `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` into the Heroku app's config vars. Reuse the same MongoDB database and existing YouTube/Discord settings; do not create or clear a queue.
+2. Stop the Railway highlights service's scheduled executions before enabling the Heroku processor. This prevents both hosts claiming different jobs concurrently during the transition. Leave its configuration available until Heroku is verified.
+3. Deploy the updated Iona code to Heroku and set `HIGHLIGHTS_ENABLED=true`. Keep the normal worker dyno running. No benchmark flag is needed for this scheduler.
+4. Look for `highlights-scheduler:enabled` and registrations for `youtube:highlight-processing` and `youtube:highlight-links`. Within the next 15 minutes, expect `job_completed` or a normal `no_due_jobs` result. Ready timestamp links are sent on a five-minute delivery tick.
+5. Verify one pending/new replay completes selection and Discord delivery. Then retire Railway's service and unused credentials. Do not upgrade hosting automatically.
 
-On each worker run, expired jobs with saved `progress.clips` are marked completed for timestamp-link delivery. This includes failed media jobs whose three attempts were exhausted. Saved comments, choices and suggested cut windows are preserved; the worker does not repeat AI spending or extraction. Active processing leases and already completed/notified jobs are left alone.
+If credentials are missing, the processing tick fails with `MISSING_CONFIGURATION`, while the bot and separate delivery schedule remain operational. Correct the config vars and let the next scheduled tick retry.
 
-For an earlier manual benchmark, rerun with the same video ID to recover that benchmark job. Automatic runs recover automatic jobs. A saved benchmark might contain only one moment because the earlier clipping benchmark limited its selection to one clip. No MongoDB reset is needed when a valid saved selection exists.
+## Manual preview and saved selections
 
-If no selection was saved and attempts were exhausted, investigate the API/model failure before explicitly resetting only that job's status and attempts. Successful pages and metadata remain reusable.
+The optional one-off command `node src/highlights/runner.js VIDEO_ID` can be run through Heroku's console/run facility for a completed public Mint replay. It owns only its one-off process's database connection; it does not replace or stop Iona's worker. A supplied ID bypasses the standalone automatic benchmark gate and may consume YouTube/model quota for new selections. Iona sends ready results on its regular delivery schedule.
+
+Scheduled Heroku runs recover expired automatic jobs with saved `progress.clips`, including exhausted media jobs from the earlier clipping prototype. They preserve saved choices and avoid another model request. Active leases and already completed/notified jobs are left alone. For an old manual benchmark, rerun the one-off command with its video ID to recover that benchmark job. Earlier benchmarks may contain only one saved moment.
+
+If no selection was saved and attempts were exhausted, investigate the API/model failure before explicitly resetting only that job. Normal replay discovery does not backfill historical baselines.
 
 ## Verification boundaries
 
-CI mocks YouTube, OpenRouter, MongoDB and Discord. Tests cover timestamp selection, API duration, bounded message formatting, recovery, duplicate prevention and delivery retries. Existing media/Drive helper tests are retained, including a generated local FFmpeg fixture, but those tools are not included in the active highlights image. Live Discord delivery, Railway runtime and provider availability require a deployed preview.
-
-## Future hosting plan
-
-Keep the Railway selection worker for now. A later change can move due-job processing into Iona's existing Heroku scheduler because the active workflow only reads metadata/comments, ranks timestamps and sends links. That migration is planned, not implemented. Retain MongoDB leases and saved progress, verify processing on Heroku, and then stop the Railway service. The existing Heroku code currently enqueues replays and delivers completed suggestions; Railway still performs selection.
+CI mocks external services and tests embedded scheduling, overlap prevention, recovery, shared-connection safety, credential validation and independent delivery retries. Existing media/Drive helper tests remain, but the active workflow does not use those tools. Heroku deployment, live provider access, actual memory usage and Discord delivery must be verified on the running app. Reported process memory includes the full Iona worker, not just one highlight job.
