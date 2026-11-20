@@ -11,6 +11,8 @@ test('Discord highlights include replay title, timestamp links and manual cut bo
     assert.match(message.body, /manual download/);
     // The title is plain text; only the numeric timestamp belongs inside each hyperlink.
     assert.equal(message.title, 'Mint [Replay]');
+    // The public thumbnail URL uses the video ID without spending another YouTube API request.
+    assert.equal(message.image, 'https://i.ytimg.com/vi/orJ2xodaKdI/hqdefault.jpg');
     assert.equal(message.url, undefined);
     assert.equal(message.content, undefined);
     assert.ok(message.body.includes('[46:16](https://www.youtube.com/watch?v=orJ2xodaKdI&t=2776s) — Funny reaction'));

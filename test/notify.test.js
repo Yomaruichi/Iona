@@ -42,6 +42,8 @@ test('three highlights are sent in one embed without message links generating Yo
     assert.equal(payload.embeds.length, 1);
     assert.equal(payload.content, undefined);
     assert.equal(payload.embeds[0].title, 'Replay 👻');
+    // The cover belongs to the same embed as all timestamp suggestions.
+    assert.deepEqual(payload.embeds[0].image, { url: 'https://i.ytimg.com/vi/orJ2xodaKdI/hqdefault.jpg' });
     assert.equal(payload.embeds[0].url, undefined);
     assert.equal((payload.embeds[0].description.match(/Suggested cut:/g) || []).length, 3);
 });

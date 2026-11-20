@@ -8,10 +8,12 @@ function init(discordClient) {
     log.info('initialized');
 }
 
-function notificationPayload({ content, title, body, url }) {
+function notificationPayload({ content, title, body, url, image }) {
     if (typeof content === 'string') return { content, allowedMentions: { parse: [] } };
     return {
-        embeds: [{ title, description: body, url, timestamp: new Date().toISOString() }],
+        embeds: [{ title, description: body, url, timestamp: new Date().toISOString(),
+            ...(image ? { image: { url: image } } : {}),
+        }],
     };
 }
 
