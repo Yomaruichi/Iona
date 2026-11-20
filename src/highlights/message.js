@@ -19,6 +19,7 @@ function highlightMessage(job) {
     });
     return {
         title: String(job.title).replace(/\s+/g, ' ').slice(0, 100),
+        image: `https://i.ytimg.com/vi/${encodeURIComponent(job.videoId)}/hqdefault.jpg`,
         body: `Replay highlights for manual download\n\n${moments.join('\n\n')}`,
     };
 }
